@@ -9,8 +9,8 @@ def home(): return "Servidor Ativo"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- CONFIGURAÇÕES ---
-TOKEN_TELEGRAM = "8226728716:AAGGkiGhiVuixcjV7r0rnncBjop9wo2XRhQ"
-API_KEY_IA = "AIzaSyDdwdK17UZqLJ5OXHsKhxth27Auya-fQ4M"
+TOKEN_TELEGRAM = "8725541698:AAEFI0GgWLqqh9UJTMT-WO3PEhl-QTCjxAU"
+API_KEY_IA = "AIzaSyDUfbKnH0-vXmcwgiMko1WN9D_eoZcwpzc"
 MODELO = "gemma-3-27b-it"
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM)

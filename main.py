@@ -1,16 +1,20 @@
-import telebot, sqlite3, requests, os
+import telebot, requests, os
 from flask import Flask
 from threading import Thread
 
-# --- MINI SERVER PARA O RENDER NÃO DERRUBAR ---
+# --- SERVIDOR PARA MANTER O RENDER ATIVO ---
 app = Flask('')
 @app.route('/')
 def home(): return "Servidor Ativo"
-def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- CONFIGURAÇÕES ---
+def run():
+    # O Render usa a porta 10000 por padrão no plano Free
+    app.run(host='0.0.0.0', port=10000)
+
+# --- CONFIGURAÇÕES SEGURAS ---
+# O Token do Telegram pode ficar aqui, mas a API KEY vai para o ambiente
 TOKEN_TELEGRAM = "8725541698:AAEFI0GgWLqqh9UJTMT-WO3PEhl-QTCjxAU"
-API_KEY_IA = "AIzaSyDUfbKnH0-vXmcwgiMko1WN9D_eoZcwpzc"
+API_KEY_IA = os.environ.get("API_KEY_IA") # Puxa do Render
 MODELO = "gemma-3-27b-it"
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM)
@@ -26,24 +30,33 @@ def handle_message(message):
     bot.register_next_step_handler(message, processar_ia, nome)
 
 def processar_ia(message, nome):
+    queixa = message.text
+    bot.send_message(message.chat.id, "🧠 Analisando... por favor aguarde.")
+    
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-    payload = {"contents": [{"parts": [{"text": f"Avaliação técnica fisioterapêutica para {nome}: {message.text}"}]}]}
+    payload = {
+        "contents": [{"parts": [{"text": f"Atue como fisioterapeuta especialista. Analise o caso de {nome}: {queixa}"}]}]
+    }
+    
     try:
-        bot.send_message(message.chat.id, "🧠 Processando análise clínica...")
-        res = requests.post(url, json=payload, timeout=60).json()
-        analise = res['candidates'][0]['content']['parts'][0]['text']
-        bot.send_message(message.chat.id, analise)
+        response = requests.post(url, json=payload, timeout=60)
+        res_data = response.json()
+        
+        if 'candidates' in res_data:
+            analise = res_data['candidates'][0]['content']['parts'][0]['text']
+            bot.send_message(message.chat.id, analise)
+        else:
+            bot.send_message(message.chat.id, "⚠️ Erro: A IA não respondeu. Verifique se a chave no Render está correta.")
     except Exception as e:
-        bot.send_message(message.chat.id, "⚠️ Erro na IA. Verifique se a chave API no Render está correta.")
+        bot.send_message(message.chat.id, f"❌ Erro de conexão: {e}")
 
 if __name__ == "__main__":
-    # Inicia o servidor disfarce em segundo plano
     t = Thread(target=run)
     t.daemon = True
     t.start()
     
-    print("🤖 Bot iniciado com sucesso!")
-    # O comando abaixo ajuda a evitar o erro 409 de conflito
-    bot.remove_webhook() 
-    bot.infinity_polling(timeout=60, long_polling_timeout=30)
+    # Limpa webhooks antigos para evitar o erro 409 Conflict
+    bot.remove_webhook()
+    print("🤖 Bot iniciado!")
+    bot.infinity_polling()
     

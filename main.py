@@ -13,7 +13,7 @@ def run():
 
 # --- CONFIGURAÇÕES SEGURAS ---
 # O Token do Telegram pode ficar aqui, mas a API KEY vai para o ambiente
-TOKEN_TELEGRAM = "8725541698:AAEFI0GgWLqqh9UJTMT-WO3PEhl-QTCjxAU"
+TOKEN_TELEGRAM = "8725541698:AAEZY9yQPAumO6E7P7NHIAFWx7F9fAveUSk"
 API_KEY_IA = os.environ.get("API_KEY_IA") # Puxa do Render
 MODELO = "gemma-3-27b-it"
 

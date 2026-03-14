@@ -10,7 +10,7 @@ def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- CONFIGURAÇÕES ---
 TOKEN_TELEGRAM = "8226728716:AAGGkiGhiVuixcjV7r0rnncBjop9wo2XRhQ"
-API_KEY_IA = AIzaSyDdwdK17UZqLJ5OXHsKhxth27Auya-fQ4M
+API_KEY_IA = "AIzaSyDdwdK17UZqLJ5OXHsKhxth27Auya-fQ4M"
 MODELO = "gemma-3-27b-it"
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM)

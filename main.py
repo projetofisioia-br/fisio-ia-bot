@@ -37,7 +37,13 @@ def processar_ia(message, nome):
         bot.send_message(message.chat.id, "⚠️ Erro na IA. Verifique se a chave API no Render está correta.")
 
 if __name__ == "__main__":
+    # Inicia o servidor disfarce em segundo plano
     t = Thread(target=run)
+    t.daemon = True
     t.start()
-    print("🤖 Bot Iniciado!")
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    
+    print("🤖 Bot iniciado com sucesso!")
+    # O comando abaixo ajuda a evitar o erro 409 de conflito
+    bot.remove_webhook() 
+    bot.infinity_polling(timeout=60, long_polling_timeout=30)
+    

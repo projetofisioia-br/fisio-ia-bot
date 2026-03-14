@@ -9,7 +9,7 @@ def home(): return "Servidor Ativo"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- CONFIGURAÇÕES ---
-TOKEN_TELEGRAM = "8736702883:AAHL4lTqfqR7eW2QGa5vFsYvKWNkgeoEjXw"
+TOKEN_TELEGRAM = "AAEGsusH9yCI-j8c0UKYQD813KlnVVz0L2U"
 API_KEY_IA = os.environ.get("API_KEY_IA")
 MODELO = "gemma-3-27b-it"
 

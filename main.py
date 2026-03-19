@@ -1,100 +1,114 @@
-import telebot, requests, os, time
+import telebot, requests, os, time, pymongo
 from telebot import types
 from flask import Flask
 from threading import Thread
+from datetime import datetime
+
+# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+MONGO_URI = os.environ.get("MONGO_URI")
+client = pymongo.MongoClient(MONGO_URI)
+db = client["MestreFisioDB"]
+pacientes_coll = db["pacientes"]
 
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V4.7 - Estabilidade de Fluxo PhD Ativa"
+def home(): return "MestreFisio V5.1 - Memória e Segurança Ativa"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- CONFIGURAÇÕES ---
+# --- CONFIGURAÇÕES DO BOT ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
 MODELO = "gemini-2.5-flash"
-
-# threaded=False impede o Erro 409 (Conflito) que aparece nos seus logs de deploy
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
-# SEU PROMPT ULTRA-AVANÇADO (Resumo para economia de tokens e precisão)
 PROMPT_SISTEMA = """
-Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios (Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências). 
-Use linguagem científica de alto nível e formatação Markdown clara.
+Você é um Fisioterapeuta PhD especializado em Traumato-Ortopedia.
+Siga RIGOROSAMENTE a estrutura de 15 tópicos enviada anteriormente.
+Seja técnico, profundo e baseie-se em evidências científicas.
 """
 
+# --- FUNÇÕES DE BANCO DE DATA (Isolamento por User ID) ---
+def salvar_no_historico(user_id, nome_paciente, texto_analise):
+    data_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
+    # O filtro {"user_id": user_id} garante que cada fisio veja só seus pacientes
+    pacientes_coll.update_one(
+        {"user_id": user_id, "nome": nome_paciente.upper()},
+        {"$push": {"consultas": {"data": data_atual, "relatorio": texto_analise}}},
+        upsert=True
+    )
+
+def buscar_meus_pacientes(user_id):
+    # Retorna a lista de nomes de todos os pacientes deste usuário
+    cursor = pacientes_coll.find({"user_id": user_id}, {"nome": 1})
+    return [p["nome"] for p in cursor]
+
+# --- INTERFACE ---
 def menu_principal():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    btn_paciente = types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente")
-    btn_duvida = types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica")
-    markup.add(btn_paciente, btn_duvida)
+    markup.add(
+        types.InlineKeyboardButton("👤 Novo Paciente / Analisar", callback_data="novo_paciente"),
+        types.InlineKeyboardButton("📋 Meus Pacientes (Histórico)", callback_data="listar_pacientes"),
+        types.InlineKeyboardButton("📚 Dúvida Técnica Direta", callback_data="duvida_tecnica")
+    )
     return markup
 
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.send_message(message.chat.id, "🚀 **MestreFisio V4.7 Especialista**\nSistema de alta performance para análises profundas.", reply_markup=menu_principal())
+def welcome(message):
+    bot.send_message(message.chat.id, "🚀 **MestreFisio V5.1 Ativado**\nMemória Cloud e Segurança de Dados OK.", reply_markup=menu_principal())
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
+    user_id = call.from_user.id
+    
     if call.data == "novo_paciente":
-        msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
-        bot.register_next_step_handler(msg, obter_nome_paciente)
-    elif call.data == "duvida_tecnica":
-        msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
-        bot.register_next_step_handler(msg, processar_ia_direta)
+        msg = bot.send_message(call.message.chat.id, "📝 Digite o NOME do paciente:")
+        bot.register_next_step_handler(msg, iniciar_fluxo_paciente)
+    
+    elif call.data == "listar_pacientes":
+        lista = buscar_meus_pacientes(user_id)
+        if lista:
+            resp = "📂 **Seus Pacientes Cadastrados:**\n\n" + "\n".join([f"• {n}" for n in lista])
+            resp += "\n\n*Para ver o histórico, peça uma nova análise com o mesmo nome.*"
+            bot.send_message(call.message.chat.id, resp)
+        else:
+            bot.send_message(call.message.chat.id, "📭 Ninguém cadastrado ainda.")
 
-def obter_nome_paciente(message):
+def iniciar_fluxo_paciente(message):
     nome = message.text.upper().strip()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico para análise:")
-    bot.register_next_step_handler(msg, processar_ia_paciente, nome)
+    msg = bot.send_message(message.chat.id, f"✅ Paciente **{nome}** identificado.\nDescreva o quadro clínico:")
+    bot.register_next_step_handler(msg, processar_ia, nome)
 
-def processar_ia_paciente(message, nome):
-    prompt = f"{PROMPT_SISTEMA}\n\nAnalise detalhadamente o caso do paciente {nome}: {message.text}"
-    chamar_gemini(message, prompt)
-
-def processar_ia_direta(message):
-    prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
-    chamar_gemini(message, prompt)
-
-def chamar_gemini(message, prompt):
-    aguarde = bot.send_message(message.chat.id, "🧠 **Construindo raciocínio clínico...**\nIsso pode levar até 90s devido à complexidade da estrutura de 15 tópicos.")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
+def processar_ia(message, nome):
+    user_id = message.from_user.id
+    aguarde = bot.send_message(message.chat.id, "🧠 **Gerando Relatório PhD e Salvando na Nuvem...**")
+    
+    prompt = f"{PROMPT_SISTEMA}\n\nAnalise: Paciente {nome}. {message.text}"
     
     try:
-        # Timeout aumentado para 400 segundos para garantir o fim da geração
-        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=400)
-        res_data = response.json()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=300)
+        analise = response.json()['candidates'][0]['content']['parts'][0]['text']
         
-        if 'candidates' in res_data:
-            analise = res_data['candidates'][0]['content']['parts'][0]['text']
-            bot.delete_message(message.chat.id, aguarde.message_id)
+        # SALVAMENTO PERSISTENTE
+        salvar_no_historico(user_id, nome, analise)
+        
+        bot.delete_message(message.chat.id, aguarde.message_id)
+        
+        # ENVIO FRACIONADO (Estabilidade V4.7)
+        for i in range(0, len(analise), 2000):
+            bot.send_message(message.chat.id, analise[i:i+2000], parse_mode="Markdown")
+            time.sleep(1)
             
-            # DIVISÃO EM MICRO-BLOCOS (1500 carac) para estabilidade total
-            # Isso evita que o Telegram "rejeite" a mensagem por ser pesada demais
-            partes = [analise[i:i+1500] for i in range(0, len(analise), 1500)]
-            
-            for index, p in enumerate(partes):
-                try:
-                    bot.send_message(message.chat.id, p, parse_mode="Markdown")
-                    # Pausa estratégica para evitar Flood e instabilidade de rede
-                    time.sleep(1.2) 
-                except:
-                    # Se o Markdown falhar por algum caractere especial da IA, envia texto puro
-                    bot.send_message(message.chat.id, p)
-            
-            bot.send_message(message.chat.id, "✅ **Análise Finalizada com Sucesso.**", reply_markup=menu_principal())
-        else:
-            bot.send_message(message.chat.id, "⚠️ A IA não conseguiu estruturar todos os tópicos. Tente reformular o caso.")
-
+        bot.send_message(message.chat.id, "✅ Relatório concluído e arquivado.", reply_markup=menu_principal())
+        
     except Exception as e:
-        print(f"Erro: {e}")
-        bot.send_message(message.chat.id, "❌ Falha na conexão técnica. O relatório é muito extenso para a rede atual. Tente simplificar.")
+        bot.send_message(message.chat.id, "❌ Erro no processamento. Verifique sua chave de IA ou conexão.")
 
 if __name__ == "__main__":
     Thread(target=run).start()
     bot.remove_webhook()
     time.sleep(2)
-    # Long polling ajustado para suportar esperas longas de processamento
-    bot.infinity_polling(timeout=120, long_polling_timeout=60)
+    bot.infinity_polling(timeout=90, long_polling_timeout=30)

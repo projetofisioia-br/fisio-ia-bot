@@ -3,3 +3,4 @@ requests
 flask
 pymongo
 dnspython
+fpdf

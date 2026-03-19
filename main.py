@@ -4,20 +4,20 @@ from flask import Flask
 from threading import Thread
 from datetime import datetime
 
-# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+# --- 1. CONFIGURAÇÃO DO BANCO DE DADOS ---
 MONGO_URI = os.environ.get("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["MestreFisioDB"]
 pacientes_coll = db["pacientes"]
 
-# --- SERVIDOR WEB ---
+# --- 2. SERVIDOR WEB (KEEP ALIVE) ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V5.1 - Memória e Segurança Ativa"
+def home(): return "MestreFisio V5.2 - Gestão de Dados Ativa"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- CONFIGURAÇÕES DO BOT ---
+# --- 3. CONFIGURAÇÕES DO BOT ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
 MODELO = "gemini-2.5-flash"
@@ -29,10 +29,9 @@ Siga RIGOROSAMENTE a estrutura de 15 tópicos enviada anteriormente.
 Seja técnico, profundo e baseie-se em evidências científicas.
 """
 
-# --- FUNÇÕES DE BANCO DE DATA (Isolamento por User ID) ---
+# --- 4. FUNÇÕES DE BANCO DE DADOS (Lógica de Negócio) ---
 def salvar_no_historico(user_id, nome_paciente, texto_analise):
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M")
-    # O filtro {"user_id": user_id} garante que cada fisio veja só seus pacientes
     pacientes_coll.update_one(
         {"user_id": user_id, "nome": nome_paciente.upper()},
         {"$push": {"consultas": {"data": data_atual, "relatorio": texto_analise}}},
@@ -40,24 +39,29 @@ def salvar_no_historico(user_id, nome_paciente, texto_analise):
     )
 
 def buscar_meus_pacientes(user_id):
-    # Retorna a lista de nomes de todos os pacientes deste usuário
     cursor = pacientes_coll.find({"user_id": user_id}, {"nome": 1})
     return [p["nome"] for p in cursor]
 
-# --- INTERFACE ---
+def excluir_paciente_db(user_id, nome_paciente):
+    resultado = pacientes_coll.delete_one({"user_id": user_id, "nome": nome_paciente.upper()})
+    return resultado.deleted_count > 0
+
+# --- 5. INTERFACE E MENUS ---
 def menu_principal():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("👤 Novo Paciente / Analisar", callback_data="novo_paciente"),
         types.InlineKeyboardButton("📋 Meus Pacientes (Histórico)", callback_data="listar_pacientes"),
+        types.InlineKeyboardButton("🗑️ Excluir Paciente", callback_data="deletar_paciente"),
         types.InlineKeyboardButton("📚 Dúvida Técnica Direta", callback_data="duvida_tecnica")
     )
     return markup
 
 @bot.message_handler(commands=['start'])
 def welcome(message):
-    bot.send_message(message.chat.id, "🚀 **MestreFisio V5.1 Ativado**\nMemória Cloud e Segurança de Dados OK.", reply_markup=menu_principal())
+    bot.send_message(message.chat.id, "🚀 **MestreFisio V5.2**\nGestão de pacientes e nuvem conectada.", reply_markup=menu_principal())
 
+# --- 6. HANDLERS DE CALLBACK (Botões) ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
@@ -71,10 +75,22 @@ def callback_query(call):
         lista = buscar_meus_pacientes(user_id)
         if lista:
             resp = "📂 **Seus Pacientes Cadastrados:**\n\n" + "\n".join([f"• {n}" for n in lista])
-            resp += "\n\n*Para ver o histórico, peça uma nova análise com o mesmo nome.*"
-            bot.send_message(call.message.chat.id, resp)
+            bot.send_message(call.message.chat.id, resp, reply_markup=menu_principal())
         else:
-            bot.send_message(call.message.chat.id, "📭 Ninguém cadastrado ainda.")
+            bot.send_message(call.message.chat.id, "📭 Ninguém cadastrado ainda.", reply_markup=menu_principal())
+
+    elif call.data == "deletar_paciente":
+        msg = bot.send_message(call.message.chat.id, "🗑️ Digite o NOME EXATO do paciente para excluir:")
+        bot.register_next_step_handler(msg, confirmar_exclusao)
+
+# --- 7. LÓGICA DE PROCESSAMENTO ---
+def confirmar_exclusao(message):
+    nome = message.text.upper().strip()
+    user_id = message.from_user.id
+    if excluir_paciente_db(user_id, nome):
+        bot.send_message(message.chat.id, f"✅ Histórico de **{nome}** apagado.", reply_markup=menu_principal())
+    else:
+        bot.send_message(message.chat.id, "❌ Paciente não encontrado.", reply_markup=menu_principal())
 
 def iniciar_fluxo_paciente(message):
     nome = message.text.upper().strip()
@@ -83,8 +99,7 @@ def iniciar_fluxo_paciente(message):
 
 def processar_ia(message, nome):
     user_id = message.from_user.id
-    aguarde = bot.send_message(message.chat.id, "🧠 **Gerando Relatório PhD e Salvando na Nuvem...**")
-    
+    aguarde = bot.send_message(message.chat.id, "🧠 **Gerando Relatório PhD e Salvando...**")
     prompt = f"{PROMPT_SISTEMA}\n\nAnalise: Paciente {nome}. {message.text}"
     
     try:
@@ -92,21 +107,18 @@ def processar_ia(message, nome):
         response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=300)
         analise = response.json()['candidates'][0]['content']['parts'][0]['text']
         
-        # SALVAMENTO PERSISTENTE
         salvar_no_historico(user_id, nome, analise)
-        
         bot.delete_message(message.chat.id, aguarde.message_id)
         
-        # ENVIO FRACIONADO (Estabilidade V4.7)
         for i in range(0, len(analise), 2000):
             bot.send_message(message.chat.id, analise[i:i+2000], parse_mode="Markdown")
             time.sleep(1)
             
-        bot.send_message(message.chat.id, "✅ Relatório concluído e arquivado.", reply_markup=menu_principal())
-        
-    except Exception as e:
-        bot.send_message(message.chat.id, "❌ Erro no processamento. Verifique sua chave de IA ou conexão.")
+        bot.send_message(message.chat.id, "✅ Relatório arquivado.", reply_markup=menu_principal())
+    except:
+        bot.send_message(message.chat.id, "❌ Erro. Tente novamente.")
 
+# --- 8. INICIALIZAÇÃO ---
 if __name__ == "__main__":
     Thread(target=run).start()
     bot.remove_webhook()

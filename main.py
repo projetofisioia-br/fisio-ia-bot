@@ -9,26 +9,22 @@ from fpdf import FPDF
 MONGO_URI = os.environ.get("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["MestreFisioDB"]
-pacientes_coll = db["pacientes"]
 usuarios_coll = db["usuarios"]
 
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
-MODELO = "gemini-1.5-flash"
+# Modelo atualizado para a versão estável mais recente
+MODELO = "gemini-1.5-flash-latest" 
 
-# Inicialização limpa para evitar duplicação
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
+# COMANDO CRÍTICO: Remove qualquer conexão antiga antes de começar
 bot.remove_webhook()
 
-# Links Tapton
-LINK_PRO = "https://payment-link-v3.ton.com.br/pl_rKQGmEeRapy4qQuv1TBr48Jw5z3lNo6L"
-LINK_M8 = "https://payment-link-v3.ton.com.br/pl_0vDNEPpMBwoKvNIvYCEYKVjr9deXY4nG"
-
-# --- 2. SERVIDOR WEB ---
+# --- 2. SERVIDOR WEB (RENDER) ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.4 Ativo"
+def home(): return "MestreFisio V7.5 Online"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- 3. CLASSE PDF ---
@@ -44,11 +40,10 @@ class PDF_Relatorio(FPDF):
 def menu_principal(uid):
     m = types.InlineKeyboardMarkup(row_width=2)
     m.add(
-        types.InlineKeyboardButton("👤 Novo Laudo PhD", callback_data="novo_paciente"),
-        types.InlineKeyboardButton("💡 Consulta Técnica Avulsa", callback_data="consulta_avulsa"),
-        types.InlineKeyboardButton("🏠 Home Care (Exercícios)", callback_data="home_care"),
+        types.InlineKeyboardButton("👤 Novo Laudo PhD", callback_data="btn_laudo"),
+        types.InlineKeyboardButton("💡 Consulta Técnica Avulsa", callback_data="btn_consulta"),
+        types.InlineKeyboardButton("🏠 Home Care", callback_data="home_care"),
         types.InlineKeyboardButton("📸 Analisar Exame", callback_data="analisar_foto"),
-        types.InlineKeyboardButton("🏥 Central do Fisio", callback_data="central_fisio"),
         types.InlineKeyboardButton("💎 Assinar Planos", callback_data="assinar_premium")
     )
     if uid == ADMIN_ID:
@@ -69,68 +64,79 @@ def verificar_acesso(uid):
 # --- 6. HANDLERS ---
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.4**\nInteligência Clínica Estável.", reply_markup=menu_principal(m.from_user.id))
+    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.5**\nPronto para sua consulta PhD.", reply_markup=menu_principal(m.from_user.id))
 
 @bot.callback_query_handler(func=lambda call: True)
 def calls(call):
     uid = call.from_user.id
-    bot.answer_callback_query(call.id) # Evita o ícone de carregamento infinito
+    pode, status = verificar_acesso(uid)
     
-    if call.data == "novo_paciente" or call.data == "consulta_avulsa":
-        pode, status = verificar_acesso(uid)
-        if pode:
-            msg = bot.send_message(uid, "📝 Digite o nome do paciente (ou tema da consulta):")
-            bot.register_next_step_handler(msg, iniciar_processo, call.data)
-        else:
-            bot.send_message(uid, "🚫 **Limite Atingido.** Assine para continuar.", reply_markup=menu_principal(uid))
-            
-    elif call.data == "assinar_premium":
-        m = types.InlineKeyboardMarkup(row_width=1)
-        m.add(types.InlineKeyboardButton("🏆 Plano PRO (Ilimitado) - R$ 59,90", url=LINK_PRO),
-              types.InlineKeyboardButton("🩺 Plano Mestre8 (8/mês) - R$ 39,90", url=LINK_M8),
-              types.InlineKeyboardButton("✅ Já paguei!", callback_data="aviso_pago"))
-        bot.edit_message_text("💎 **Escolha seu Plano PhD**", uid, call.message.id, reply_markup=m)
+    if not pode:
+        bot.send_message(uid, "🚫 **Limite Gratuito Atingido.**\nAssine um plano para continuar.")
+        return
 
-# --- 7. IA E PROCESSAMENTO ---
-def iniciar_processo(message, tipo):
+    if call.data == "btn_laudo":
+        msg = bot.send_message(uid, "📝 **MODO LAUDO:**\nDigite o nome do paciente:")
+        bot.register_next_step_handler(msg, laudo_passo_2)
+    
+    elif call.data == "btn_consulta":
+        msg = bot.send_message(uid, "💡 **MODO CONSULTA:**\nDescreva sua dúvida técnica ou caso clínico diretamente:")
+        bot.register_next_step_handler(msg, processar_consulta_direta)
+
+# --- 7. PROCESSAMENTO SEPARADO ---
+
+# FLUXO DE LAUDO (NOME -> CASO -> PDF)
+def laudo_passo_2(message):
     nome = message.text.upper()
-    msg = bot.send_message(message.chat.id, f"✅ Selecionado: {nome}\nDescreva o caso clínico agora:")
-    bot.register_next_step_handler(msg, gerar_resposta_final, nome, tipo)
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nAgora descreva o quadro clínico para gerar o PDF:")
+    bot.register_next_step_handler(msg, finalizar_laudo_pdf, nome)
 
-def gerar_resposta_final(message, nome_p, tipo):
-    uid = message.from_user.id
-    aguarde = bot.send_message(message.chat.id, "🧠 Processando informação PhD...")
-    u = usuarios_coll.find_one({"user_id": uid})
+def finalizar_laudo_pdf(message, nome_p):
+    aguarde = bot.send_message(message.chat.id, "🧠 Gerando Laudo PhD...")
+    resposta = chamar_ai(f"Fisioterapeuta PhD. Gere um laudo de 15 tópicos para o paciente {nome_p}: {message.text}")
     
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-        prompt = f"Fisioterapeuta PhD. Caso: {message.text}"
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=25)
-        
-        if res.status_code != 200:
-            bot.edit_message_text("❌ Erro na API do Google. Verifique sua API_KEY_IA nas variáveis do Render.", message.chat.id, aguarde.message_id)
-            return
+    if "ERRO" in resposta:
+        bot.edit_message_text(resposta, message.chat.id, aguarde.message_id)
+        return
 
-        txt = res.json()['candidates'][0]['content']['parts'][0]['text']
-        usuarios_coll.update_one({"user_id": uid}, {"$inc": {"laudos_usados": 1}})
-        
-        if tipo == "novo_paciente":
-            path = f"Laudo_{nome_p}.pdf"
-            pdf = PDF_Relatorio(u.get('nome', 'Doutor'), u.get('registro', 'FISIO'))
-            pdf.add_page()
-            pdf.set_font("Arial", size=10)
-            pdf.multi_cell(0, 7, txt.encode('ascii', 'ignore').decode('ascii'))
-            pdf.output(path)
-            bot.delete_message(message.chat.id, aguarde.message_id)
-            with open(path, "rb") as f: bot.send_document(message.chat.id, f)
-            os.remove(path)
+    u = usuarios_coll.find_one({"user_id": message.from_user.id})
+    path = f"Laudo_{nome_p}.pdf"
+    try:
+        pdf = PDF_Relatorio(u.get('nome', 'Dr.'), u.get('registro', 'Fisio'))
+        pdf.add_page(); pdf.set_font("Arial", size=10)
+        pdf.multi_cell(0, 7, resposta.encode('ascii', 'ignore').decode('ascii'))
+        pdf.output(path)
+        usuarios_coll.update_one({"user_id": message.from_user.id}, {"$inc": {"laudos_usados": 1}})
+        bot.delete_message(message.chat.id, aguarde.message_id)
+        with open(path, "rb") as f: bot.send_document(message.chat.id, f)
+        os.remove(path)
+    except:
+        bot.send_message(message.chat.id, "❌ Erro ao criar o arquivo PDF.")
+
+# FLUXO DE CONSULTA (TEXTO DIRETO)
+def processar_consulta_direta(message):
+    aguarde = bot.send_message(message.chat.id, "🧠 Analisando sua dúvida...")
+    resposta = chamar_ai(f"Fisioterapeuta PhD. Responda tecnicamente: {message.text}")
+    
+    if "ERRO" in resposta:
+        bot.edit_message_text(resposta, message.chat.id, aguarde.message_id)
+    else:
+        usuarios_coll.update_one({"user_id": message.from_user.id}, {"$inc": {"laudos_usados": 1}})
+        bot.edit_message_text(f"💡 **Resposta Técnica:**\n\n{resposta}", message.chat.id, aguarde.message_id)
+
+# FUNÇÃO CENTRAL DA IA (FORMATO CORRIGIDO)
+def chamar_ai(prompt):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    try:
+        res = requests.post(url, json=payload, timeout=30)
+        if res.status_code == 200:
+            return res.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            bot.edit_message_text(f"💡 **Consulta:**\n\n{txt}", message.chat.id, aguarde.message_id)
-            
-    except Exception as e:
-        print(f"Erro: {e}")
-        bot.edit_message_text("❌ Falha crítica. Tente novamente em instantes.", message.chat.id, aguarde.message_id)
+            return f"❌ ERRO API ({res.status_code}): Verifique se a chave no Render está correta e sem espaços."
+    except:
+        return "❌ ERRO: Falha na conexão com o Google."
 
 if __name__ == "__main__":
     Thread(target=run).start()
-    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+    bot.infinity_polling(timeout=30, long_polling_timeout=15)

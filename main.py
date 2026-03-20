@@ -14,20 +14,36 @@ usuarios_coll = db["usuarios"]
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
-# Modelo atualizado para a versão estável mais recente
 MODELO = "gemini-1.5-flash-latest" 
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
-# COMANDO CRÍTICO: Remove qualquer conexão antiga antes de começar
 bot.remove_webhook()
 
-# --- 2. SERVIDOR WEB (RENDER) ---
+# --- 2. FUNÇÃO DE AUTOTESTE (VAI APARECER NO LOG DO RENDER) ---
+def realizar_autoteste_api():
+    print("🧪 INICIANDO AUTOTESTE DA API GOOGLE...")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
+    payload = {"contents": [{"parts": [{"text": "Teste rápido de conexão."}]}]}
+    try:
+        res = requests.post(url, json=payload, timeout=15)
+        if res.status_code == 200:
+            print("✅ SUCESSO: A API do Google está aceitando sua chave!")
+        else:
+            print(f"❌ FALHA NA API: Código {res.status_code}")
+            print(f"📝 MOTIVO DO GOOGLE: {res.text}")
+    except Exception as e:
+        print(f"⚠️ ERRO DE CONEXÃO: {e}")
+
+# Executa o teste assim que o código sobe
+realizar_autoteste_api()
+
+# --- 3. SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.5 Online"
+def home(): return "MestreFisio V7.6 Online"
 def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- 3. CLASSE PDF ---
+# --- 4. CLASSE PDF ---
 class PDF_Relatorio(FPDF):
     def __init__(self, n, r): super().__init__(); self.n, self.r = n, r
     def header(self):
@@ -36,7 +52,7 @@ class PDF_Relatorio(FPDF):
         self.set_y(-15); self.set_font('Arial','I',8)
         self.cell(0,10,f'Dr(a). {self.n} | {self.r}',0,0,'C')
 
-# --- 4. MENUS ---
+# --- 5. MENUS ---
 def menu_principal(uid):
     m = types.InlineKeyboardMarkup(row_width=2)
     m.add(
@@ -50,53 +66,32 @@ def menu_principal(uid):
         m.add(types.InlineKeyboardButton("📊 Painel Administrativo", callback_data="painel_admin"))
     return m
 
-# --- 5. LÓGICA DE ACESSO ---
-def verificar_acesso(uid):
-    u = usuarios_coll.find_one({"user_id": uid})
-    if not u or "nome" not in u: return False, "CADASTRO"
-    if uid == ADMIN_ID: return True, "ADMIN"
-    status = u.get("status", "Free")
-    limite = u.get("limite_mensal", 3) if status == "Free" else u.get("limite_mensal", 8)
-    usados = u.get("laudos_usados", 0)
-    if usados >= limite: return False, "LIMITE"
-    return True, status
-
 # --- 6. HANDLERS ---
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.5**\nPronto para sua consulta PhD.", reply_markup=menu_principal(m.from_user.id))
+    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.6**\nSistema de diagnóstico ativo.", reply_markup=menu_principal(m.from_user.id))
 
 @bot.callback_query_handler(func=lambda call: True)
 def calls(call):
     uid = call.from_user.id
-    pode, status = verificar_acesso(uid)
-    
-    if not pode:
-        bot.send_message(uid, "🚫 **Limite Gratuito Atingido.**\nAssine um plano para continuar.")
-        return
-
     if call.data == "btn_laudo":
         msg = bot.send_message(uid, "📝 **MODO LAUDO:**\nDigite o nome do paciente:")
         bot.register_next_step_handler(msg, laudo_passo_2)
-    
     elif call.data == "btn_consulta":
-        msg = bot.send_message(uid, "💡 **MODO CONSULTA:**\nDescreva sua dúvida técnica ou caso clínico diretamente:")
+        msg = bot.send_message(uid, "💡 **MODO CONSULTA:**\nDescreva sua dúvida técnica:")
         bot.register_next_step_handler(msg, processar_consulta_direta)
 
-# --- 7. PROCESSAMENTO SEPARADO ---
-
-# FLUXO DE LAUDO (NOME -> CASO -> PDF)
 def laudo_passo_2(message):
     nome = message.text.upper()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nAgora descreva o quadro clínico para gerar o PDF:")
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
     bot.register_next_step_handler(msg, finalizar_laudo_pdf, nome)
 
 def finalizar_laudo_pdf(message, nome_p):
     aguarde = bot.send_message(message.chat.id, "🧠 Gerando Laudo PhD...")
-    resposta = chamar_ai(f"Fisioterapeuta PhD. Gere um laudo de 15 tópicos para o paciente {nome_p}: {message.text}")
+    res_ai = chamar_ai(f"Fisioterapeuta PhD. Laudo para {nome_p}: {message.text}")
     
-    if "ERRO" in resposta:
-        bot.edit_message_text(resposta, message.chat.id, aguarde.message_id)
+    if "ERRO" in res_ai:
+        bot.edit_message_text(res_ai, message.chat.id, aguarde.message_id)
         return
 
     u = usuarios_coll.find_one({"user_id": message.from_user.id})
@@ -104,38 +99,27 @@ def finalizar_laudo_pdf(message, nome_p):
     try:
         pdf = PDF_Relatorio(u.get('nome', 'Dr.'), u.get('registro', 'Fisio'))
         pdf.add_page(); pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 7, resposta.encode('ascii', 'ignore').decode('ascii'))
+        pdf.multi_cell(0, 7, res_ai.encode('ascii', 'ignore').decode('ascii'))
         pdf.output(path)
-        usuarios_coll.update_one({"user_id": message.from_user.id}, {"$inc": {"laudos_usados": 1}})
         bot.delete_message(message.chat.id, aguarde.message_id)
         with open(path, "rb") as f: bot.send_document(message.chat.id, f)
         os.remove(path)
-    except:
-        bot.send_message(message.chat.id, "❌ Erro ao criar o arquivo PDF.")
+    except: bot.send_message(message.chat.id, "❌ Erro ao gerar PDF.")
 
-# FLUXO DE CONSULTA (TEXTO DIRETO)
 def processar_consulta_direta(message):
-    aguarde = bot.send_message(message.chat.id, "🧠 Analisando sua dúvida...")
-    resposta = chamar_ai(f"Fisioterapeuta PhD. Responda tecnicamente: {message.text}")
-    
-    if "ERRO" in resposta:
-        bot.edit_message_text(resposta, message.chat.id, aguarde.message_id)
-    else:
-        usuarios_coll.update_one({"user_id": message.from_user.id}, {"$inc": {"laudos_usados": 1}})
-        bot.edit_message_text(f"💡 **Resposta Técnica:**\n\n{resposta}", message.chat.id, aguarde.message_id)
+    aguarde = bot.send_message(message.chat.id, "🧠 Analisando...")
+    res_ai = chamar_ai(f"Fisioterapeuta PhD. Responda: {message.text}")
+    bot.edit_message_text(f"💡 **Resposta:**\n\n{res_ai}", message.chat.id, aguarde.message_id)
 
-# FUNÇÃO CENTRAL DA IA (FORMATO CORRIGIDO)
 def chamar_ai(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
     try:
-        res = requests.post(url, json=payload, timeout=30)
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            return f"❌ ERRO API ({res.status_code}): Verifique se a chave no Render está correta e sem espaços."
-    except:
-        return "❌ ERRO: Falha na conexão com o Google."
+            return f"❌ ERRO API {res.status_code}. Verifique os logs do Render para o motivo real."
+    except: return "❌ Erro de conexão."
 
 if __name__ == "__main__":
     Thread(target=run).start()

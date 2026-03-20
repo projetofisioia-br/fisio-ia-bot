@@ -1,4 +1,4 @@
-import telebot, requests, os, pymongo, io, base64
+import telebot, requests, os, pymongo, time
 from telebot import types
 from flask import Flask
 from threading import Thread
@@ -16,31 +16,35 @@ TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
 MODELO = "gemini-1.5-flash-latest" 
 
+# INICIALIZAÇÃO COM LIMPEZA FORÇADA
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
-bot.remove_webhook()
 
-# --- 2. FUNÇÃO DE AUTOTESTE (VAI APARECER NO LOG DO RENDER) ---
-def realizar_autoteste_api():
-    print("🧪 INICIANDO AUTOTESTE DA API GOOGLE...")
+def resetar_conexao():
+    print("🧹 Removendo conexões antigas do Telegram...")
+    bot.remove_webhook()
+    time.sleep(2) # Pausa estratégica para o Telegram processar a desconexão
+
+resetar_conexao()
+
+# --- 2. AUTODIAGNÓSTICO DA CHAVE ---
+def autoteste_google():
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-    payload = {"contents": [{"parts": [{"text": "Teste rápido de conexão."}]}]}
+    payload = {"contents": [{"parts": [{"text": "Teste"}]}]}
     try:
-        res = requests.post(url, json=payload, timeout=15)
+        res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
-            print("✅ SUCESSO: A API do Google está aceitando sua chave!")
+            print("✅ GOOGLE API: Chave funcionando perfeitamente!")
         else:
-            print(f"❌ FALHA NA API: Código {res.status_code}")
-            print(f"📝 MOTIVO DO GOOGLE: {res.text}")
+            print(f"❌ GOOGLE API ERRO {res.status_code}: {res.text}")
     except Exception as e:
-        print(f"⚠️ ERRO DE CONEXÃO: {e}")
+        print(f"⚠️ ERRO DE CONEXÃO GOOGLE: {e}")
 
-# Executa o teste assim que o código sobe
-realizar_autoteste_api()
+autoteste_google()
 
 # --- 3. SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.6 Online"
+def home(): return "MestreFisio V7.7 Ativo"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- 4. CLASSE PDF ---
@@ -69,21 +73,21 @@ def menu_principal(uid):
 # --- 6. HANDLERS ---
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.6**\nSistema de diagnóstico ativo.", reply_markup=menu_principal(m.from_user.id))
+    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.7**\nConexão limpa e estabilizada.", reply_markup=menu_principal(m.from_user.id))
 
 @bot.callback_query_handler(func=lambda call: True)
 def calls(call):
     uid = call.from_user.id
     if call.data == "btn_laudo":
-        msg = bot.send_message(uid, "📝 **MODO LAUDO:**\nDigite o nome do paciente:")
+        msg = bot.send_message(uid, "📝 **NOME DO PACIENTE:**")
         bot.register_next_step_handler(msg, laudo_passo_2)
     elif call.data == "btn_consulta":
-        msg = bot.send_message(uid, "💡 **MODO CONSULTA:**\nDescreva sua dúvida técnica:")
+        msg = bot.send_message(uid, "💡 **SUA DÚVIDA TÉCNICA:**")
         bot.register_next_step_handler(msg, processar_consulta_direta)
 
 def laudo_passo_2(message):
     nome = message.text.upper()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o caso clínico:")
     bot.register_next_step_handler(msg, finalizar_laudo_pdf, nome)
 
 def finalizar_laudo_pdf(message, nome_p):
@@ -99,7 +103,7 @@ def finalizar_laudo_pdf(message, nome_p):
     try:
         pdf = PDF_Relatorio(u.get('nome', 'Dr.'), u.get('registro', 'Fisio'))
         pdf.add_page(); pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 7, res_ai.encode('ascii', 'ignore').decode('ascii'))
+        pdf.multi_cell(0, 7, res_ai.encode('latin-1', 'replace').decode('latin-1'))
         pdf.output(path)
         bot.delete_message(message.chat.id, aguarde.message_id)
         with open(path, "rb") as f: bot.send_document(message.chat.id, f)
@@ -118,9 +122,10 @@ def chamar_ai(prompt):
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            return f"❌ ERRO API {res.status_code}. Verifique os logs do Render para o motivo real."
-    except: return "❌ Erro de conexão."
+            return f"❌ ERRO API {res.status_code}: Verifique a chave e o faturamento no Google AI Studio."
+    except: return "❌ Erro de conexão com a IA."
 
 if __name__ == "__main__":
     Thread(target=run).start()
-    bot.infinity_polling(timeout=30, long_polling_timeout=15)
+    # Polling com intervalo para evitar Erro 409
+    bot.infinity_polling(timeout=60, long_polling_timeout=30)

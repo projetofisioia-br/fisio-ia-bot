@@ -17,13 +17,14 @@ API_KEY_IA = os.environ.get("API_KEY_IA")
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
+# Links Ton Reais fornecidos
 LINK_M8 = "https://payment-link-v3.ton.com.br/pl_0vDNEPpMBwoKvNIvYCEYKVjr9deXY4nG"
 LINK_PRO = "https://payment-link-v3.ton.com.br/pl_rKQGmEeRapy4qQuv1TBr48Jw5z3lNo6L"
 
 # --- 2. SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V10.0 Online"
+def home(): return "MestreFisio V10.1 Online"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- 3. CLASSE PDF ---
@@ -43,7 +44,7 @@ class PDF_Laudo(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Dr(a). {self.dr_nome} | {self.registro}', 0, 0, 'C')
 
-# --- 4. FUNÇÃO IA ---
+# --- 4. FUNÇÃO IA (CORRIGIDA) ---
 def chamar_ai(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY_IA}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -64,12 +65,12 @@ def menu_inicial():
     )
     return m
 
-# --- 6. FLUXO PRINCIPAL ---
+# --- 6. FLUXO DE CADASTRO ---
 @bot.message_handler(commands=['start'])
 def start(m):
     user = usuarios_coll.find_one({"user_id": m.from_user.id})
     if not user:
-        msg = bot.send_message(m.chat.id, "👋 Bem-vindo! Digite seu **NOME COMPLETO** para o cabeçalho dos laudos:")
+        msg = bot.send_message(m.chat.id, "👋 Bem-vindo! Digite seu **NOME COMPLETO** para os laudos:")
         bot.register_next_step_handler(msg, salvar_nome)
     else:
         bot.send_message(m.chat.id, f"Olá, Dr(a). {user['nome']}!", reply_markup=menu_inicial())
@@ -83,6 +84,7 @@ def salvar_registro(m):
     usuarios_coll.update_one({"user_id": m.from_user.id}, {"$set": {"registro": m.text.upper()}})
     bot.send_message(m.chat.id, "✅ Perfil configurado!", reply_markup=menu_inicial())
 
+# --- 7. CALLBACKS ---
 @bot.callback_query_handler(func=lambda call: True)
 def tratar_callback(call):
     uid = call.from_user.id
@@ -100,7 +102,7 @@ def tratar_callback(call):
     elif call.data == "ver_historico":
         exibir_historico(call.message)
 
-# --- 7. LÓGICA DE HISTÓRICO E PDF ---
+# --- 8. LÓGICA DE LAUDO E HISTÓRICO ---
 def laudo_passo_2(m):
     nome_paciente = m.text.upper()
     msg = bot.send_message(m.chat.id, f"✅ Paciente: {nome_paciente}\nDescreva a avaliação clínica:")
@@ -109,9 +111,11 @@ def laudo_passo_2(m):
 def gerar_laudo_final(m, nome_p):
     aguarde = bot.send_message(m.chat.id, "🧠 Processando Laudo PhD...")
     user = usuarios_coll.find_one({"user_id": m.from_user.id})
-    res_ia = llamar_ai(f"Gere um laudo fisioterapêutico PhD para {nome_p}: {m.text}")
     
-    # Salvar no Histórico (Banco de Dados)
+    # Chamada corrigida: chamar_ai em vez de llamar_ai
+    res_ia = chamar_ai(f"Gere um laudo fisioterapêutico PhD para {nome_p}: {m.text}")
+    
+    # Salvar no Banco
     historico_coll.insert_one({
         "user_id": m.from_user.id,
         "paciente": nome_p,
@@ -123,11 +127,14 @@ def gerar_laudo_final(m, nome_p):
     try:
         pdf = PDF_Laudo(user['nome'], user['registro'])
         pdf.add_page(); pdf.set_font("Arial", size=11)
-        pdf.multi_cell(0, 10, res_ia.encode('latin-1', 'replace').decode('latin-1'))
+        txt = res_ia.encode('latin-1', 'replace').decode('latin-1')
+        pdf.multi_cell(0, 10, txt)
         pdf.output(path)
         with open(path, "rb") as f: bot.send_document(m.chat.id, f)
         os.remove(path)
-    except: bot.send_message(m.chat.id, "❌ Erro ao gerar PDF.")
+    except:
+        bot.send_message(m.chat.id, "❌ Erro ao gerar PDF.")
+    
     bot.delete_message(m.chat.id, aguarde.message_id)
 
 def exibir_historico(m):

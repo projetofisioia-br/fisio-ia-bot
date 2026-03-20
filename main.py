@@ -16,16 +16,19 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
 MODELO = "gemini-1.5-flash"
-bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
-# Links de Cobrança Tapton
+# Limpeza de Webhook para evitar Erro 409
+bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
+bot.remove_webhook()
+
+# Links Tapton
 LINK_PRO = "https://payment-link-v3.ton.com.br/pl_rKQGmEeRapy4qQuv1TBr48Jw5z3lNo6L"
 LINK_M8 = "https://payment-link-v3.ton.com.br/pl_0vDNEPpMBwoKvNIvYCEYKVjr9deXY4nG"
 
 # --- 2. SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.2 Online"
+def home(): return "MestreFisio V7.3 Online"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- 3. CLASSE PDF ---
@@ -37,49 +40,38 @@ class PDF_Relatorio(FPDF):
         self.set_y(-15); self.set_font('Arial','I',8)
         self.cell(0,10,f'Dr(a). {self.n} | {self.r}',0,0,'C')
 
-# --- 4. MENUS ---
+# --- 4. MENU PRINCIPAL (RESTAURADO) ---
 def menu_principal(uid):
     m = types.InlineKeyboardMarkup(row_width=2)
     m.add(
         types.InlineKeyboardButton("👤 Novo Laudo PhD", callback_data="novo_paciente"),
+        types.InlineKeyboardButton("💡 Consulta Técnica Avulsa", callback_data="consulta_avulsa"),
         types.InlineKeyboardButton("🏠 Home Care (Exercícios)", callback_data="home_care"),
         types.InlineKeyboardButton("📸 Analisar Exame", callback_data="analisar_foto"),
         types.InlineKeyboardButton("🏥 Central do Fisio", callback_data="central_fisio"),
         types.InlineKeyboardButton("💎 Assinar Planos", callback_data="assinar_premium")
     )
+    # Painel Admin aparece apenas para você
+    if uid == ADMIN_ID:
+        m.add(types.InlineKeyboardButton("📊 Painel Administrativo", callback_data="painel_admin"))
     return m
 
-# --- 5. LOGICA DE ACESSO (3 CONSULTAS GRÁTIS) ---
+# --- 5. LÓGICA DE ACESSO ---
 def verificar_acesso(uid):
     u = usuarios_coll.find_one({"user_id": uid})
     if not u or "nome" not in u: return False, "CADASTRO"
     if uid == ADMIN_ID: return True, "ADMIN"
-    
     status = u.get("status", "Free")
-    # Limite é 3 para grátis, ou o limite do plano contratado
     limite = u.get("limite_mensal", 3) if status == "Free" else u.get("limite_mensal", 8)
     usados = u.get("laudos_usados", 0)
-    
     if usados >= limite: return False, "LIMITE"
     return True, status
 
-# --- 6. COMANDOS ---
+# --- 6. COMANDOS E HANDLERS ---
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.2**\nSua inteligência clínica PhD.", reply_markup=menu_principal(m.from_user.id))
+    bot.send_message(m.chat.id, "🚀 **MestreFisio V7.3**\nSua inteligência clínica PhD.", reply_markup=menu_principal(m.from_user.id))
 
-@bot.message_handler(commands=['liberar']) # Comando exclusivo do Admin
-def comando_liberar(m):
-    if m.from_user.id == ADMIN_ID:
-        try:
-            _, target_id, plano = m.text.split()
-            limite = 9999 if plano.upper() == "PRO" else 8
-            usuarios_coll.update_one({"user_id": int(target_id)}, {"$set": {"status": "Premium", "plano": plano.upper(), "limite_mensal": limite, "laudos_usados": 0}}, upsert=True)
-            bot.send_message(int(target_id), f"💎 **ACESSO ATIVADO!**\nSeu plano {plano.upper()} está pronto para uso.")
-            bot.send_message(ADMIN_ID, f"✅ Usuário {target_id} liberado com sucesso.")
-        except: bot.reply_to(m, "Use: /liberar ID PLANO (Ex: /liberar 12345678 PRO)")
-
-# --- 7. HANDLERS ---
 @bot.callback_query_handler(func=lambda call: True)
 def calls(call):
     uid = call.from_user.id
@@ -88,74 +80,57 @@ def calls(call):
         m.add(types.InlineKeyboardButton("🏆 Plano PRO (Ilimitado) - R$ 59,90", url=LINK_PRO),
               types.InlineKeyboardButton("🩺 Plano Mestre8 (8/mês) - R$ 39,90", url=LINK_M8),
               types.InlineKeyboardButton("✅ Já paguei! Enviar Comprovante", callback_data="aviso_pago"))
-        bot.edit_message_text("💎 **Planos MestreFisio PhD**\n\nInvista na sua produtividade clínica.", uid, call.message.id, reply_markup=m)
-
-    elif call.data == "aviso_pago":
-        bot.send_message(uid, f"✅ **Aviso recebido!** Envie o print do comprovante agora. Seu ID: `{uid}`")
-        bot.send_message(ADMIN_ID, f"⚠️ **PAGAMENTO PENDENTE**\nUsuário `{uid}` afirma que pagou. Verifique o comprovante!")
-
-    elif call.data == "novo_paciente":
+        bot.edit_message_text("💎 **Planos MestreFisio PhD**", uid, call.message.id, reply_markup=m)
+    
+    elif call.data == "consulta_avulsa" or call.data == "novo_paciente":
         pode, status = verificar_acesso(uid)
         if pode:
-            msg = bot.send_message(uid, "📝 Nome do Paciente:")
-            bot.register_next_step_handler(msg, iniciar_laudo)
+            msg = bot.send_message(uid, "📝 Digite o nome do paciente (ou tema da consulta):")
+            bot.register_next_step_handler(msg, iniciar_processo, call.data)
         else:
-            bot.send_message(uid, "🚫 **Limite Gratuito Atingido (3/3)**\nAssine um plano para continuar gerando laudos PhD ilimitados.", reply_markup=menu_principal(uid))
+            bot.send_message(uid, "🚫 **Limite Gratuito Atingido (3/3)**\nAssine um plano para continuar.", reply_markup=menu_principal(uid))
 
-    elif call.data == "home_care":
-        msg = bot.send_message(uid, "🏠 **HOME CARE**\nDescreva a patologia e o nível do paciente para eu gerar os exercícios:")
-        bot.register_next_step_handler(msg, processar_home_care)
-
-# --- 8. PROCESSAMENTOS IA ---
-def processar_home_care(message):
-    aguarde = bot.send_message(message.chat.id, "🧠 Criando programa Home Care...")
-    prompt = f"Fisioterapeuta PhD. Crie uma lista de 5 exercícios domiciliares para: {message.text}. Explique execução e repetições."
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}).json()
-        resposta = res['candidates'][0]['content']['parts'][0]['text']
-        bot.edit_message_text(f"🏠 **Programa Home Care:**\n\n{resposta}", message.chat.id, aguarde.message_id)
-    except: bot.send_message(message.chat.id, "❌ Erro ao gerar exercícios.")
-
-@bot.message_handler(content_types=['photo'])
-def ler_exame(message):
-    uid = message.from_user.id
-    pode, _ = verificar_acesso(uid)
-    if not pode: 
-        bot.send_message(uid, "🚫 Função exclusiva para assinantes."); return
-    
-    aguarde = bot.send_message(uid, "🧠 Analisando imagem...")
-    f_info = bot.get_file(message.photo[-1].file_id)
-    img = requests.get(f'https://api.telegram.org/file/bot{TOKEN_TELEGRAM}/{f_info.file_path}').content
-    img_b64 = base64.b64encode(img).decode('utf-8')
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-        payload = {"contents": [{"parts": [{"text": "Interprete os achados deste exame para um fisioterapeuta PhD:"}, {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}}]}]}
-        res = requests.post(url, json=payload).json()
-        bot.edit_message_text(f"📋 **Análise PhD:**\n\n{res['candidates'][0]['content']['parts'][0]['text']}", uid, aguarde.message_id)
-    except: bot.send_message(uid, "❌ Erro na leitura da imagem.")
-
-def iniciar_laudo(message):
+# --- 7. PROCESSAMENTO IA ---
+def iniciar_processo(message, tipo):
     nome = message.text.upper()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
-    bot.register_next_step_handler(msg, gerar_laudo_final, nome)
+    msg = bot.send_message(message.chat.id, f"✅ Selecionado: {nome}\nDescreva o quadro clínico ou sua dúvida técnica:")
+    bot.register_next_step_handler(msg, gerar_resposta_final, nome, tipo)
 
-def gerar_laudo_final(message, nome_p):
-    uid = message.from_user.id; aguarde = bot.send_message(message.chat.id, "🧠 Gerando Laudo PhD...")
+def gerar_resposta_final(message, nome_p, tipo):
+    uid = message.from_user.id
+    aguarde = bot.send_message(message.chat.id, "🧠 Processando informação PhD...")
     u = usuarios_coll.find_one({"user_id": uid})
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-        res = requests.post(url, json={"contents": [{"parts": [{"text": f"Fisioterapeuta PhD. Laudo de 15 tópicos para {nome_p}: {message.text}"}]}]}).json()
+        prompt = f"Aja como Fisioterapeuta PhD. Responda detalhadamente sobre: {message.text}"
+        res = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}).json()
         txt = res['candidates'][0]['content']['parts'][0]['text']
-        pacientes_coll.update_one({"user_id": uid, "nome": nome_p}, {"$push": {"consultas": {"data": datetime.now(), "txt": txt}}}, upsert=True)
+        
+        # Incrementar uso e salvar
         usuarios_coll.update_one({"user_id": uid}, {"$inc": {"laudos_usados": 1}})
-        path = f"Laudo_{nome_p}.pdf"; pdf = PDF_Relatorio(u['nome'], u['registro']); pdf.add_page()
-        pdf.set_font("Arial", size=10); pdf.multi_cell(0, 7, txt.encode('ascii', 'ignore').decode('ascii'))
-        pdf.output(path); bot.delete_message(message.chat.id, aguarde.message_id)
-        with open(path, "rb") as f: bot.send_document(message.chat.id, f)
-        os.remove(path)
-    except: bot.send_message(message.chat.id, "❌ Erro ao gerar laudo.")
+        
+        if tipo == "novo_paciente":
+            path = f"Laudo_{nome_p}.pdf"; pdf = PDF_Relatorio(u['nome'], u['registro']); pdf.add_page()
+            pdf.set_font("Arial", size=10); pdf.multi_cell(0, 7, txt.encode('ascii', 'ignore').decode('ascii'))
+            pdf.output(path); bot.delete_message(message.chat.id, aguarde.message_id)
+            with open(path, "rb") as f: bot.send_document(message.chat.id, f)
+            os.remove(path)
+        else:
+            bot.edit_message_text(f"💡 **Consulta Técnica:**\n\n{txt}", message.chat.id, aguarde.message_id)
+    except:
+        bot.send_message(message.chat.id, "❌ Erro ao processar. Verifique sua conexão ou API Key.")
+
+@bot.message_handler(commands=['liberar'])
+def liberar(m):
+    if m.from_user.id == ADMIN_ID:
+        try:
+            _, tid, p = m.text.split()
+            lim = 9999 if p.upper() == "PRO" else 8
+            usuarios_coll.update_one({"user_id": int(tid)}, {"$set": {"status": "Premium", "plano": p.upper(), "limite_mensal": lim, "laudos_usados": 0}}, upsert=True)
+            bot.send_message(int(tid), "💎 Seu acesso Premium foi ativado!")
+            bot.send_message(ADMIN_ID, "✅ Sucesso!")
+        except: bot.reply_to(m, "Use: /liberar ID PLANO")
 
 if __name__ == "__main__":
     Thread(target=run).start()
-    bot.infinity_polling()
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)

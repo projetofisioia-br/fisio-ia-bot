@@ -1,117 +1,126 @@
-import telebot, requests, os, pymongo, time
+import telebot, requests, os, time
 from telebot import types
 from flask import Flask
 from threading import Thread
 from fpdf import FPDF
 
 # --- 1. CONFIGURAÇÕES ---
-MONGO_URI = os.environ.get("MONGO_URI")
-client = pymongo.MongoClient(MONGO_URI)
-db = client["MestreFisioDB"]
-usuarios_coll = db["usuarios"]
-
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
 
-# MODELO SEM PREFIXOS PARA MÁXIMA COMPATIBILIDADE
-MODELO = "gemini-1.5-flash" 
-
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
-def resetar_conexao():
-    print("🧹 Limpando conexões antigas...")
-    bot.remove_webhook()
-    time.sleep(1)
-
-resetar_conexao()
-
-# --- 2. SERVIDOR WEB ---
+# SERVIDOR WEB PARA O RENDER
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V8.0 Online"
+def home(): return "MestreFisio V9.1 Online"
 def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- 3. CLASSE PDF ---
-class PDF_Relatorio(FPDF):
-    def __init__(self, n, r): 
-        super().__init__()
-        self.n, self.r = n, r
-    def header(self):
-        self.set_font('Arial','B',12); self.cell(0,10,'MESTREFISIO PhD - RELATORIO',0,1,'C')
-    def footer(self):
-        self.set_y(-15); self.set_font('Arial','I',8)
-        self.cell(0,10,f'Dr(a). {self.n} | {self.r}',0,0,'C')
+# --- 2. FUNÇÃO DA IA (CONEXÃO ESTÁVEL) ---
+def chamar_ai(prompt):
+    # Usando v1 para garantir compatibilidade com contas Free/Pro
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={API_KEY_IA}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    try:
+        res = requests.post(url, json=payload, timeout=25)
+        return res.json()['candidates'][0]['content']['parts'][0]['text']
+    except:
+        return "⚠️ O servidor PhD está processando muitas requisições. Tente novamente em breve."
 
-# --- 4. MENUS ---
-def menu_principal():
-    m = types.InlineKeyboardMarkup(row_width=2)
+# --- 3. MENUS E INTERFACE ---
+def menu_inicial():
+    m = types.InlineKeyboardMarkup(row_width=1)
     m.add(
-        types.InlineKeyboardButton("👤 Novo Laudo PhD", callback_data="btn_laudo"),
-        types.InlineKeyboardButton("💡 Consulta Técnica Avulsa", callback_data="btn_consulta"),
-        types.InlineKeyboardButton("🏠 Home Care", callback_data="home_care"),
-        types.InlineKeyboardButton("📸 Analisar Exame", callback_data="analisar_foto")
+        types.InlineKeyboardButton("📄 Gerar Laudo PhD (PDF)", callback_data="laudo"),
+        types.InlineKeyboardButton("💡 Consulta Técnica PhD", callback_data="consulta"),
+        types.InlineKeyboardButton("💎 Assinar Planos Pro", callback_data="menu_planos")
     )
     return m
 
-# --- 5. HANDLERS ---
+def menu_assinaturas():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(
+        types.InlineKeyboardButton("🥈 Plano Mensal - R$ 49,90", callback_data="pix_mensal"),
+        types.InlineKeyboardButton("🥇 Plano Anual (Promo) - R$ 399,00", callback_data="pix_anual"),
+        types.InlineKeyboardButton("⬅️ Voltar", callback_data="voltar")
+    )
+    return m
+
+# --- 4. HANDLERS (COMANDOS) ---
 @bot.message_handler(commands=['start'])
-def start(m):
-    bot.send_message(m.chat.id, "🚀 **MestreFisio V8.0**\nPronto para sua consulta PhD.", reply_markup=menu_principal())
+def boas_vindas(m):
+    bot.send_message(m.chat.id, "✨ **MestreFisio PhD**\nSeu assistente clínico oficial.", reply_markup=menu_inicial())
 
 @bot.callback_query_handler(func=lambda call: True)
-def calls(call):
-    if call.data == "btn_laudo":
-        msg = bot.send_message(call.message.chat.id, "📝 **MODO LAUDO:** Digite o nome do paciente:")
-        bot.register_next_step_handler(msg, laudo_passo_2)
-    elif call.data == "btn_consulta":
-        msg = bot.send_message(call.message.chat.id, "💡 **MODO CONSULTA:** Descreva seu caso ou dúvida técnica:")
-        bot.register_next_step_handler(msg, processar_consulta_direta)
-
-def laudo_passo_2(message):
-    nome = message.text.upper()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
-    bot.register_next_step_handler(msg, finalizar_laudo_pdf, nome)
-
-def finalizar_laudo_pdf(message, nome_p):
-    aguarde = bot.send_message(message.chat.id, "🧠 Gerando Laudo PhD...")
-    res = chamar_ai(f"Gere um laudo fisioterapêutico PhD para o paciente {nome_p}: {message.text}")
+def tratar_botoes(call):
+    if call.data == "laudo":
+        msg = bot.send_message(call.message.chat.id, "📝 Digite o **NOME** do paciente:")
+        bot.register_next_step_handler(msg, laudo_passo_final)
     
-    if "ERRO" in res:
-        bot.edit_message_text(res, message.chat.id, aguarde.message_id)
-        return
+    elif call.data == "consulta":
+        msg = bot.send_message(call.message.chat.id, "💡 Descreva o caso clínico ou dúvida técnica:")
+        bot.register_next_step_handler(msg, responder_consulta)
+    
+    elif call.data == "menu_planos":
+        bot.edit_message_text("💎 **ESCOLHA SEU PLANO PRO**\n\nLibere laudos ilimitados e análise de exames.", 
+                              call.message.chat.id, call.message.message_id, reply_markup=menu_assinaturas())
 
-    path = f"Laudo_{nome_p}.pdf"
+    elif call.data == "pix_mensal":
+        texto = (
+            "🥈 **PLANO MENSAL PRO**\n\n"
+            "💰 Valor: **R$ 49,90/mês**\n"
+            "🔑 Chave PIX (E-mail): `projetofisioia-br@gmail.com`\n\n"
+            "Após o pagamento, envie o comprovante para o suporte."
+        )
+        bot.send_message(call.message.chat.id, texto, parse_mode="Markdown")
+
+    elif call.data == "pix_anual":
+        texto = (
+            "🥇 **PLANO ANUAL PRO (Economia de 33%)**\n\n"
+            "💰 Valor: **R$ 399,00/ano**\n"
+            "🔑 Chave PIX (E-mail): `projetofisioia-br@gmail.com`\n\n"
+            "Após o pagamento, envie o comprovante para o suporte."
+        )
+        bot.send_message(call.message.chat.id, texto, parse_mode="Markdown")
+    
+    elif call.data == "voltar":
+        bot.edit_message_text("✨ Escolha uma opção:", call.message.chat.id, call.message.message_id, reply_markup=menu_inicial())
+
+# --- 5. LÓGICA DE NEGÓCIO ---
+def responder_consulta(m):
+    status = bot.send_message(m.chat.id, "🧠 Consultando base PhD...")
+    resposta = chamar_ai(f"Responda como Fisioterapeuta PhD de forma técnica: {m.text}")
+    bot.edit_message_text(f"💡 **Parecer Técnico:**\n\n{resposta}", m.chat.id, status.message_id)
+
+def laudo_passo_final(m):
+    nome_p = m.text.upper()
+    msg = bot.send_message(m.chat.id, f"✅ Paciente: {nome_p}\nAgora descreva o quadro clínico:")
+    bot.register_next_step_handler(msg, finalizar_laudo_pdf, nome_p)
+
+def finalizar_laudo_pdf(m, nome):
+    status = bot.send_message(m.chat.id, "⏳ Gerando documento PDF...")
+    prompt = f"Gere um laudo fisioterapêutico formal e PhD para o paciente {nome}: {m.text}"
+    conteudo = chamar_ai(prompt)
+    
+    path = f"Laudo_{nome}.pdf"
     try:
-        pdf = PDF_Relatorio("Dr. Fisioterapeuta", "CREFITO-X")
-        pdf.add_page(); pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 7, res.encode('latin-1', 'replace').decode('latin-1'))
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=11)
+        pdf.multi_cell(0, 10, conteudo.encode('latin-1', 'replace').decode('latin-1'))
         pdf.output(path)
-        bot.delete_message(message.chat.id, aguarde.message_id)
-        with open(path, "rb") as f: bot.send_document(message.chat.id, f)
+        
+        with open(path, "rb") as f:
+            bot.send_document(m.chat.id, f, caption=f"📄 Laudo de {nome}")
         os.remove(path)
-    except: bot.send_message(message.chat.id, "❌ Erro ao gerar o arquivo PDF.")
-
-def processar_consulta_direta(message):
-    aguarde = bot.send_message(message.chat.id, "🧠 Analisando...")
-    res = chamar_ai(f"Responda como Fisioterapeuta PhD: {message.text}")
-    bot.edit_message_text(f"💡 **Resposta PhD:**\n\n{res}", message.chat.id, aguarde.message_id)
-
-# --- 6. INTEGRAÇÃO GOOGLE AI (CORREÇÃO 404) ---
-def chamar_ai(prompt):
-    # USANDO A ROTA V1 ESTÁVEL
-    url = f"https://generativelanguage.googleapis.com/v1/models/{MODELO}:generateContent?key={API_KEY_IA}"
-    
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    
-    try:
-        res = requests.post(url, json=payload, timeout=30)
-        if res.status_code == 200:
-            return res.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"❌ ERRO API {res.status_code}: Verifique se a API Gemini está ATIVA no seu Google Cloud Console."
     except:
-        return "❌ Erro de conexão com a inteligência PhD."
+        bot.send_message(m.chat.id, "❌ Erro ao converter laudo para PDF.")
+    
+    bot.delete_message(m.chat.id, status.message_id)
 
+# --- 6. EXECUÇÃO ---
 if __name__ == "__main__":
+    # Remove webhook para evitar erro 409
+    bot.remove_webhook()
     Thread(target=run).start()
     bot.infinity_polling(timeout=60)

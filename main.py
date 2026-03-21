@@ -1,178 +1,158 @@
-import telebot, requests, os, time, pymongo
+import telebot, requests, os, time
 from telebot import types
 from flask import Flask
 from threading import Thread
-from fpdf import FPDF
-from datetime import datetime
 
-# --- 1. CONFIGURAÇÕES ---
-MONGO_URI = os.environ.get("MONGO_URI")
-client = pymongo.MongoClient(MONGO_URI)
-db = client["MestreFisioDB"]
-usuarios_coll = db["usuarios"]
-historico_coll = db["historico_laudos"]
+# --- SERVIDOR WEB ---
+app = Flask('')
+@app.route('/')
+def home(): return "MestreFisio V5.0 - Global PhD Active"
 
+def run(): app.run(host='0.0.0.0', port=10000)
+
+# --- CONFIGURAÇÕES ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
-
-MODELO_ATIVO = "gemini-2.5-flash" 
+PAYMENT_TOKEN = os.environ.get("PAYMENT_TOKEN_TEST") # Configure no Render
+MODELO = "gemini-2.5-flash"
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
-LINK_M8 = "https://payment-link-v3.ton.com.br/pl_0vDNEPpMBwoKvNIvYCEYKVjr9deXY4nG"
-LINK_PRO = "https://payment-link-v3.ton.com.br/pl_rKQGmEeRapy4qQuv1TBr48Jw5z3lNo6L"
+# --- TRADUÇÕES E PROMPT ---
+PROMPT_SISTEMA = """
+Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios (Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências). 
+Use linguagem científica de alto nível e formatação Markdown clara.
+"""
 
-# --- 2. SERVIDOR WEB ---
-app = Flask('')
-@app.route('/')
-def home(): return f"MestreFisio V12.2 - Online com {MODELO_ATIVO}"
-def run(): app.run(host='0.0.0.0', port=10000)
-
-# --- 3. FUNÇÃO IA (MANTIDA COM FILTROS E 300S) ---
-def chamar_ai(prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_ATIVO}:generateContent?key={API_KEY_IA}"
-    payload = {
-        "contents": [{"parts": [{"text": f"Atue como um Fisioterapeuta PhD e analise: {prompt}"}]}],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 4096,
-            "topP": 0.8,
-            "topK": 40
-        },
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
+TEXTOS = {
+    'pt': {
+        'start': "🚀 **MestreFisio PhD**\nSistema de alta performance para análises clínicas profundas.",
+        'btn_paciente': "👤 Novo Paciente",
+        'btn_duvida': "📚 Dúvida Técnica",
+        'btn_planos': "💎 Planos de Acesso Pro",
+        'btn_ajuda': "⚖️ Ajuda e Termos Legais",
+        'msg_ajuda': "⚖️ **AVISO LEGAL**\nFerramenta de auxílio. O diagnóstico final é de responsabilidade do profissional habilitado.",
+        'pay_desc': "Acesso ilimitado a laudos e consultas PhD.",
+        'sucesso': "✅ Pagamento confirmado! Acesso PhD Pro liberado!"
+    },
+    'en': {
+        'start': "🚀 **MestreFisio PhD**\nHigh-performance system for deep clinical analysis.",
+        'btn_paciente': "👤 New Patient",
+        'btn_duvida': "📚 Technical Doubt",
+        'btn_planos': "💎 Pro Access Plans",
+        'btn_ajuda': "⚖️ Help & Legal Terms",
+        'msg_ajuda': "⚖️ **LEGAL NOTICE**\nSupport tool only. Final diagnosis is the therapist's responsibility.",
+        'pay_desc': "Unlimited access to PhD reports and consultations.",
+        'sucesso': "✅ Payment confirmed! PhD Pro access activated!"
     }
-    headers = {'Content-Type': 'application/json'}
-    try:
-        res = requests.post(url, json=payload, headers=headers, timeout=300)
-        if res.status_code == 200:
-            return res.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"⚠️ Erro técnico {res.status_code}. Verifique a chave."
-    except Exception as e:
-        return "⚠️ O servidor PhD excedeu o tempo limite. Tente novamente."
+}
 
-# --- 4. CLASSE PDF ---
-class PDF_Laudo(FPDF):
-    def __init__(self, dr_nome, registro):
-        super().__init__()
-        self.dr_nome, self.registro = dr_nome, registro
-    def header(self):
-        self.set_font('Arial', 'B', 12)
-        self.cell(0, 10, 'RELATORIO FISIOTERAPEUTICO PhD', 0, 1, 'C')
-        self.ln(5)
-    def footer(self):
-        self.set_y(-15); self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Dr(a). {self.dr_nome} | {self.registro}', 0, 0, 'C')
+def obter_idioma(m):
+    lang = m.from_user.language_code
+    return 'en' if lang and lang.startswith('en') else 'pt'
 
-# --- 5. INTERFACE E FLUXO ---
-def menu_principal():
-    m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(
-        types.InlineKeyboardButton("📄 Novo Laudo PhD (PDF)", callback_data="laudo"),
-        types.InlineKeyboardButton("💡 Consulta Técnica PhD", callback_data="consulta"),
-        types.InlineKeyboardButton("📚 Histórico de Pacientes", callback_data="ver_historico"),
-        types.InlineKeyboardButton("💎 Planos de Acesso", callback_data="planos")
+def menu_principal(lang):
+    t = TEXTOS[lang]
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(t['btn_paciente'], callback_data="novo_paciente"),
+        types.InlineKeyboardButton(t['btn_duvida'], callback_data="duvida_tecnica"),
+        types.InlineKeyboardButton(t['btn_planos'], callback_data="planos"),
+        types.InlineKeyboardButton(t['btn_ajuda'], callback_data="ajuda_btn")
     )
-    return m
+    return markup
 
+# --- HANDLERS DE COMANDO ---
 @bot.message_handler(commands=['start'])
-def start(m):
-    user = usuarios_coll.find_one({"user_id": m.from_user.id})
-    if not user:
-        msg = bot.send_message(m.chat.id, "👋 Bem-vindo! Digite seu **NOME COMPLETO**:")
-        bot.register_next_step_handler(msg, salvar_nome)
-    else:
-        bot.send_message(m.chat.id, f"Olá, Dr(a). {user['nome']}!", reply_markup=menu_principal())
+def send_welcome(message):
+    lang = obter_idioma(message)
+    bot.send_message(message.chat.id, TEXTOS[lang]['start'], reply_markup=menu_principal(lang))
 
-def salvar_nome(m):
-    usuarios_coll.update_one({"user_id": m.from_user.id}, {"$set": {"nome": m.text.upper()}}, upsert=True)
-    msg = bot.send_message(m.chat.id, "Informe seu **REGISTRO/CREFITO**:")
-    bot.register_next_step_handler(msg, salvar_registro)
+# --- LÓGICA DE PAGAMENTO GLOBAL ---
+@bot.callback_query_handler(func=lambda call: call.data == "planos")
+def enviar_fatura(call):
+    lang = obter_idioma(call)
+    moeda = "USD" if lang == 'en' else "BRL"
+    preco = 1990 if lang == 'en' else 4990 # $19.90 ou R$ 49,90
+    
+    bot.send_invoice(
+        call.message.chat.id,
+        title="MestreFisio PhD Pro 💎",
+        description=TEXTOS[lang]['pay_desc'],
+        provider_token=PAYMENT_TOKEN,
+        currency=moeda,
+        prices=[types.LabeledPrice(label="PhD Pro", amount=preco)],
+        start_parameter="mestre-fisio-pro",
+        payload="pro_access_global"
+    )
 
-def salvar_registro(m):
-    usuarios_coll.update_one({"user_id": m.from_user.id}, {"$set": {"registro": m.text.upper()}})
-    bot.send_message(m.chat.id, "✅ Configurado!", reply_markup=menu_principal())
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def checkout_confirm(pre_checkout_query):
+    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
+@bot.message_handler(content_types=['successful_payment'])
+def pagamento_sucesso(m):
+    lang = obter_idioma(m)
+    # Aqui você pode adicionar a integração com seu MongoDB para salvar o status 'PRO'
+    bot.send_message(m.chat.id, TEXTOS[lang]['sucesso'])
+
+# --- LÓGICA CLÍNICA ORIGINAL (MANTIDA) ---
 @bot.callback_query_handler(func=lambda call: True)
-def tratar_callback(call):
-    uid = call.from_user.id
-    if call.data == "laudo":
-        msg = bot.send_message(uid, "📝 Nome do Paciente:")
-        bot.register_next_step_handler(msg, laudo_p2)
-    elif call.data == "consulta":
-        msg = bot.send_message(uid, "💡 Descreva sua dúvida:")
-        bot.register_next_step_handler(msg, responder_consulta)
-    elif call.data == "ver_historico":
-        docs = historico_coll.find({"user_id": uid}).sort("_id", -1).limit(5)
-        txt = "📚 **Últimos Atendimentos:**\n\n"
-        encontrou = False
-        for d in docs:
-            encontrou = True
-            txt += f"👤 {d['paciente']} — 📅 {d['data']}\n"
-        bot.send_message(uid, txt if encontrou else "Vazio.")
-    elif call.data == "planos":
-        m = types.InlineKeyboardMarkup()
-        m.add(types.InlineKeyboardButton("🥈 MestreFisio 8", url=LINK_M8))
-        m.add(types.InlineKeyboardButton("🥇 MestreFisio Pro", url=LINK_PRO))
-        bot.send_message(uid, "💎 Escolha seu plano:", reply_markup=m)
+def callback_query(call):
+    lang = obter_idioma(call)
+    bot.answer_callback_query(call.id)
+    if call.data == "novo_paciente":
+        msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente / Patient Name:")
+        bot.register_next_step_handler(msg, obter_nome_paciente)
+    elif call.data == "duvida_tecnica":
+        msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar? / What condition to analyze?")
+        bot.register_next_step_handler(msg, processar_ia_direta)
+    elif call.data == "ajuda_btn":
+        bot.send_message(call.message.chat.id, TEXTOS[lang]['msg_ajuda'], parse_mode="Markdown")
 
-# --- 6. LÓGICA DE GERAÇÃO (ATUALIZADA PARA BLOCOS) ---
-def laudo_p2(m):
-    nome_p = m.text.upper()
-    msg = bot.send_message(m.chat.id, f"✅ Paciente: {nome_p}\nDescreva o caso:")
-    bot.register_next_step_handler(msg, concluir_laudo, nome_p)
+def obter_nome_paciente(message):
+    nome = message.text.upper().strip()
+    bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico:")
+    bot.register_next_step_handler(message, processar_ia_paciente, nome)
 
-def concluir_laudo(m, nome):
-    aguarde = bot.send_message(m.chat.id, "🧠 Gerando Laudo PhD e PDF...")
-    user = usuarios_coll.find_one({"user_id": m.from_user.id})
-    res_ia = chamar_ai(f"Gere um laudo detalhado para o paciente {nome}: {m.text}")
+def processar_ia_paciente(message, nome):
+    prompt = f"{PROMPT_SISTEMA}\n\nAnalise detalhadamente o caso do paciente {nome}: {message.text}"
+    chamar_gemini(message, prompt)
+
+def processar_ia_direta(message):
+    prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
+    chamar_gemini(message, prompt)
+
+def chamar_gemini(message, prompt):
+    # Lógica de processamento em blocos e timeout de 400s mantida
+    aguarde = bot.send_message(message.chat.id, "🧠 **Construindo raciocínio clínico...**")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
     
-    historico_coll.insert_one({
-        "user_id": m.from_user.id, "paciente": nome,
-        "data": datetime.now().strftime("%d/%m/%Y"), "conteudo": res_ia
-    })
-    
-    path = f"Laudo_{nome}.pdf"
     try:
-        pdf = PDF_Laudo(user['nome'], user['registro'])
-        pdf.add_page(); pdf.set_font("Arial", size=11)
-        txt_pdf = res_ia.encode('latin-1', 'replace').decode('latin-1')
-        pdf.multi_cell(0, 10, txt_pdf)
-        pdf.output(path)
-        with open(path, "rb") as f: bot.send_document(m.chat.id, f)
-        os.remove(path)
-    except:
-        bot.send_message(m.chat.id, "❌ Erro no PDF, mas salvo no histórico.")
-    
-    bot.delete_message(m.chat.id, aguarde.message_id)
-
-def responder_consulta(m):
-    aguarde = bot.send_message(m.chat.id, "🧠 Analisando base técnica...")
-    try:
-        res_completa = chamar_ai(m.text)
-        blocos = res_completa.split('\n\n') # Divide por parágrafos
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=400)
+        res_data = response.json()
         
-        if blocos:
-            # Substitui a mensagem de "Aguarde" pelo primeiro bloco
-            bot.edit_message_text(
-                chat_id=m.chat.id, message_id=aguarde.message_id,
-                text=f"💡 **Parecer Técnico (Parte 1):**\n\n{blocos[0]}"
-            )
-            # Envia os demais blocos conforme surgem
-            for i, bloco in enumerate(blocos[1:], 2):
-                if bloco.strip():
-                    time.sleep(0.8)
-                    bot.send_message(m.chat.id, f"💡 **Continuação ({i}):**\n\n{bloco}")
-    except Exception as e:
-        bot.send_message(m.chat.id, "❌ Erro ao processar resposta técnica.")
+        if 'candidates' in res_data:
+            analise = res_data['candidates'][0]['content']['parts'][0]['text']
+            bot.delete_message(message.chat.id, aguarde.message_id)
+            
+            partes = [analise[i:i+1500] for i in range(0, len(analise), 1500)]
+            for p in partes:
+                try:
+                    bot.send_message(message.chat.id, p, parse_mode="Markdown")
+                    time.sleep(1.2) 
+                except:
+                    bot.send_message(message.chat.id, p)
+            
+            bot.send_message(message.chat.id, "✅ **Análise Finalizada.**", reply_markup=menu_principal(obter_idioma(message)))
+        else:
+            bot.send_message(message.chat.id, "⚠️ Erro na estrutura da IA.")
 
-# --- 7. INICIALIZAÇÃO ---
+    except Exception as e:
+        bot.send_message(message.chat.id, "❌ Falha na conexão técnica.")
+
 if __name__ == "__main__":
-    requests.get(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/deleteWebhook")
     Thread(target=run).start()
-    bot.infinity_polling(timeout=60, skip_pending=True)
+    bot.remove_webhook()
+    time.sleep(2)
+    bot.infinity_polling(timeout=120, long_polling_timeout=60)

@@ -14,7 +14,7 @@ def run(): app.run(host='0.0.0.0', port=10000)
 # --- CONFIGURAÇÕES ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
-PAYMENT_TOKEN = os.environ.get("PAYMENT_TOKEN_TEST")
+PAYMENT_TOKEN_TEST = os.environ.get("PAYMENT_TOKEN_TEST")
 MONGO_URI = os.environ.get("MONGO_URI")
 MODELO = "gemini-1.5-flash"
 

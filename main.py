@@ -30,20 +30,18 @@ app = Flask('')
 def home(): return f"MestreFisio V12.1 - Online com {MODELO_ATIVO}"
 def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- 3. FUNÇÃO IA (ATUALIZADA COM FILTROS LIBERADOS) ---
+# --- 3. FUNÇÃO IA (MAX PERFORMANCE E TEMPO) ---
 def chamar_ai(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_ATIVO}:generateContent?key={API_KEY_IA}"
     
     payload = {
-        "contents": [{"parts": [{"text": f"Responda como um Fisioterapeuta PhD: {prompt}"}]}],
-      "generationConfig": {
-            "temperature": 0.3, # Reduzimos para ser mais rápido e preciso
-            "maxOutputTokens": 2048, # Aumentamos para suportar textos bem longos
+        "contents": [{"parts": [{"text": f"Atue como um Fisioterapeuta PhD e forneça uma análise exaustiva e completa: {prompt}"}]}],
+        "generationConfig": {
+            "temperature": 0.3, # Respostas mais técnicas e diretas
+            "maxOutputTokens": 4096, # Dobramos o espaço para o texto não cortar
             "topP": 0.8,
             "topK": 40
         },
-
-        # Adicionado para evitar que o Google bloqueie termos de saúde/clínicos
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -54,16 +52,17 @@ def chamar_ai(prompt):
     headers = {'Content-Type': 'application/json'}
     
     try:
-        # Aumentamos o timeout para 60 segundos para casos clínicos longos
-        res = requests.post(url, json=payload, headers=headers, timeout=60)
+        # Aumentado para 300 segundos (5 minutos) conforme sua solicitação
+        res = requests.post(url, json=payload, headers=headers, timeout=300)
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text']
         else:
             print(f"Erro IA {res.status_code}: {res.text}")
-            return f"⚠️ Erro técnico {res.status_code}. Verifique a chave no Render."
+            return f"⚠️ Erro técnico {res.status_code}. Tente simplificar a pergunta."
     except Exception as e:
         print(f"Erro Conexão IA: {e}")
-        return "⚠️ O servidor PhD demorou a responder. Tente novamente em instantes."
+        return "⚠️ O processamento PhD excedeu o tempo limite. Tente novamente em instantes."
+
 
 # --- 4. CLASSE PDF ---
 class PDF_Laudo(FPDF):

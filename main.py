@@ -35,13 +35,14 @@ def chamar_ai(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_ATIVO}:generateContent?key={API_KEY_IA}"
     
     payload = {
-        "contents": [{"parts": [{"text": f"Atue como um Fisioterapeuta PhD e forneça uma análise exaustiva e completa: {prompt}"}]}],
+        "contents": [{"parts": [{"text": f"Atue como um Fisioterapeuta PhD e analise: {prompt}"}]}],
         "generationConfig": {
-            "temperature": 0.3, # Respostas mais técnicas e diretas
-            "maxOutputTokens": 4096, # Dobramos o espaço para o texto não cortar
+            "temperature": 0.3,
+            "maxOutputTokens": 4096,
             "topP": 0.8,
             "topK": 40
         },
+        # REINTRODUZIDO: Isso impede que a IA bloqueie respostas sobre saúde/clínica
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -52,16 +53,19 @@ def chamar_ai(prompt):
     headers = {'Content-Type': 'application/json'}
     
     try:
-        # Aumentado para 300 segundos (5 minutos) conforme sua solicitação
+        # Mantendo os 300 segundos (5 min) para processamentos longos
         res = requests.post(url, json=payload, headers=headers, timeout=300)
+        
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text']
         else:
             print(f"Erro IA {res.status_code}: {res.text}")
-            return f"⚠️ Erro técnico {res.status_code}. Tente simplificar a pergunta."
+            return f"⚠️ Erro técnico {res.status_code}. Tente novamente."
+            
     except Exception as e:
         print(f"Erro Conexão IA: {e}")
-        return "⚠️ O processamento PhD excedeu o tempo limite. Tente novamente em instantes."
+        return "⚠️ O servidor PhD demorou a responder. Tente novamente em instantes."
+
 
 
 # --- 4. CLASSE PDF ---

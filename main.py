@@ -27,29 +27,40 @@ LINK_PRO = "https://payment-link-v3.ton.com.br/pl_rKQGmEeRapy4qQuv1TBr48Jw5z3lNo
 # --- 2. SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return f"MestreFisio V12.0 - Online com {MODELO_ATIVO}"
+def home(): return f"MestreFisio V12.1 - Online com {MODELO_ATIVO}"
 def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- 3. FUNÇÃO IA (Otimizada para 2.5-Flash) ---
+# --- 3. FUNÇÃO IA (ATUALIZADA COM FILTROS LIBERADOS) ---
 def chamar_ai(prompt):
-    # Usamos v1beta para garantir compatibilidade com modelos 2.5
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_ATIVO}:generateContent?key={API_KEY_IA}"
+    
     payload = {
         "contents": [{"parts": [{"text": f"Responda como um Fisioterapeuta PhD: {prompt}"}]}],
-        "generationConfig": {"temperature": 0.7}
+        "generationConfig": {
+            "temperature": 0.4,
+            "maxOutputTokens": 1000
+        },
+        # Adicionado para evitar que o Google bloqueie termos de saúde/clínicos
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
     }
     headers = {'Content-Type': 'application/json'}
     
     try:
-        res = requests.post(url, json=payload, headers=headers, timeout=40)
+        # Aumentamos o timeout para 60 segundos para casos clínicos longos
+        res = requests.post(url, json=payload, headers=headers, timeout=60)
         if res.status_code == 200:
             return res.json()['candidates'][0]['content']['parts'][0]['text']
         else:
             print(f"Erro IA {res.status_code}: {res.text}")
-            return f"⚠️ Erro {res.status_code} na IA. Verifique faturamento ou chave."
+            return f"⚠️ Erro técnico {res.status_code}. Verifique a chave no Render."
     except Exception as e:
         print(f"Erro Conexão IA: {e}")
-        return "⚠️ O servidor PhD está processando muitas requisições. Tente em instantes."
+        return "⚠️ O servidor PhD demorou a responder. Tente novamente em instantes."
 
 # --- 4. CLASSE PDF ---
 class PDF_Laudo(FPDF):
@@ -127,7 +138,6 @@ def concluir_laudo(m, nome):
     user = usuarios_coll.find_one({"user_id": m.from_user.id})
     res_ia = chamar_ai(f"Gere um laudo detalhado para o paciente {nome}: {m.text}")
     
-    # Salva histórico
     historico_coll.insert_one({
         "user_id": m.from_user.id,
         "paciente": nome,
@@ -157,7 +167,7 @@ def responder_consulta(m):
 
 # --- 7. INICIALIZAÇÃO ---
 if __name__ == "__main__":
-    # Limpa webhooks antigos para evitar Erro 409
+    # Limpa webhooks antigos
     requests.get(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/deleteWebhook")
     
     Thread(target=run).start()

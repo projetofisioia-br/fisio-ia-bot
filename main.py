@@ -36,10 +36,13 @@ def chamar_ai(prompt):
     
     payload = {
         "contents": [{"parts": [{"text": f"Responda como um Fisioterapeuta PhD: {prompt}"}]}],
-        "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 1000
+      "generationConfig": {
+            "temperature": 0.3, # Reduzimos para ser mais rápido e preciso
+            "maxOutputTokens": 2048, # Aumentamos para suportar textos bem longos
+            "topP": 0.8,
+            "topK": 40
         },
+
         # Adicionado para evitar que o Google bloqueie termos de saúde/clínicos
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},

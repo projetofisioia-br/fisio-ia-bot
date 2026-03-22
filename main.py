@@ -149,5 +149,8 @@ def start(m):
 
 if __name__ == "__main__":
     Thread(target=run).start()
+    
     bot.remove_webhook()
-    bot.infinity_polling(timeout=120)
+    time.sleep(3)
+    
+    bot.infinity_polling(timeout=120, long_polling_timeout=60)

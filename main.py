@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V6.5 - IA & Histórico Ativos"
+def home(): return "MestreFisio V6.6 - IA Corrigida"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -17,8 +17,8 @@ API_KEY_IA = os.environ.get("API_KEY_IA", "").strip()
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 
-# Ajuste técnico no nome do modelo
-MODELO_IA = "models/gemini-1.5-flash" 
+# Nome do modelo sem o prefixo 'models/' aqui
+NOME_MODELO = "gemini-1.5-flash" 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
 client = MongoClient(MONGO_URI)
@@ -26,7 +26,7 @@ db = client['mestre_fisio_db']
 usuarios_coll = db['usuarios']
 pacientes_coll = db['pacientes']
 
-PROMPT_SISTEMA = "Atue como um Fisioterapeuta PhD. Forneça análise em 15 tópicos técnicos com foco clínico."
+PROMPT_SISTEMA = "Atue como um Fisioterapeuta PhD. Forneça análise em 15 tópicos técnicos."
 
 # --- MENUS ---
 def menu_principal():
@@ -39,7 +39,7 @@ def menu_principal():
     )
     return markup
 
-# --- LÓGICA DE IA (CORREÇÃO DE ENDPOINT) ---
+# --- LÓGICA DE IA (URL ESTÁVEL) ---
 def chamar_ia(message, texto_usuario, nome_paciente=None):
     user_id = message.from_user.id
     user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
@@ -50,17 +50,21 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
 
     aguarde = bot.send_message(message.chat.id, "🧠 **Gerando raciocínio clínico PhD...**")
     
-    # URL atualizada para v1beta
-    url = f"https://generativelanguage.googleapis.com/v1beta/{MODELO_IA}:generateContent?key={API_KEY_IA}"
+    # URL CORRIGIDA: Adicionamos 'models/' diretamente na URL antes do nome
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{NOME_MODELO}:generateContent?key={API_KEY_IA}"
     
+    headers = {'Content-Type': 'application/json'}
     payload = {
-        "contents": [{"parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA: {texto_usuario}"}]}]
+        "contents": [{
+            "parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA: {texto_usuario}"}]
+        }]
     }
 
     try:
-        response = requests.post(url, json=payload, timeout=60)
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
         res_data = response.json()
         
+        # Log de diagnóstico (apenas para você ver se der erro de novo)
         if 'candidates' in res_data:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
             
@@ -77,12 +81,14 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
             for i in range(0, len(analise), 4000):
                 bot.send_message(message.chat.id, analise[i:i+4000], parse_mode="Markdown")
         else:
-            erro_msg = res_data.get('error', {}).get('message', 'Erro na resposta da IA')
-            bot.edit_message_text(f"⚠️ Erro Google: {erro_msg}", message.chat.id, aguarde.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"❌ Falha técnica: {str(e)}", message.chat.id, aguarde.message_id)
+            # Se ainda der erro, o Google vai nos dizer o motivo exato agora
+            erro_detalhado = res_data.get('error', {}).get('message', 'Erro desconhecido')
+            bot.edit_message_text(f"⚠️ Resposta do Google: {erro_detalhado}", message.chat.id, aguarde.message_id)
 
-# --- BOTÕES E COMANDOS ---
+    except Exception as e:
+        bot.edit_message_text(f"❌ Erro de conexão: {str(e)}", message.chat.id, aguarde.message_id)
+
+# --- RESTANTE DO FLUXO ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_geral(call):
     if call.data == "novo_paciente":
@@ -99,21 +105,17 @@ def callback_geral(call):
         msg = bot.send_message(call.message.chat.id, "💡 Qual sua dúvida?")
         bot.register_next_step_handler(msg, lambda m: chamar_ia(m, m.text))
     elif call.data == "planos":
-        enviar_fatura(call)
+        bot.send_invoice(
+            call.message.chat.id, "MestreFisio PhD Pro 💎", "Acesso ilimitado.",
+            TOKEN_PAYMENT, "BRL", [types.LabeledPrice("Pro", 5990)],
+            invoice_payload="pro_access", start_parameter="pro"
+        )
     bot.answer_callback_query(call.id)
 
 def obter_nome(m):
     nome = m.text.upper()
     msg = bot.send_message(m.chat.id, f"✅ Paciente {nome}\nDescreva o quadro:")
     bot.register_next_step_handler(msg, lambda m2: chamar_ia(m2, m2.text, nome))
-
-# --- PAGAMENTO (STÁVEL) ---
-def enviar_fatura(call):
-    bot.send_invoice(
-        call.message.chat.id, "MestreFisio PhD Pro 💎", "Acesso ilimitado.",
-        TOKEN_PAYMENT, "BRL", [types.LabeledPrice("Pro", 5990)],
-        invoice_payload="pro_access", start_parameter="pro"
-    )
 
 @bot.message_handler(commands=['start'])
 def start(m):

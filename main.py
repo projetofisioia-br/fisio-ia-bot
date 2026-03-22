@@ -12,11 +12,15 @@ def home(): return "MestreFisio V4.7 - Estabilidade de Fluxo PhD Ativa"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- CONFIGURAÇÕES ---
-TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
-API_KEY_IA = os.environ.get("API_KEY_IA")
+TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM", "").strip()
+API_KEY_IA = os.environ.get("API_KEY_IA", "").strip()
 MODELO = "gemini-2.5-flash"
-MONGO_URI = os.environ.get("MONGO_URI") # NOVO: Variável do banco
+MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
+
+bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
+
+
 
 # --- CONEXÃO BANCO DE DADOS (NOVO) ---
 client = MongoClient(MONGO_URI)

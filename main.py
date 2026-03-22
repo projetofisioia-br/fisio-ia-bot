@@ -12,7 +12,7 @@ def home(): return "MestreFisio V5.5 - Online"
 def run(): app.run(host='0.0.0.0', port=10000)
 
 # --- CONFIGURAÇÕES ---
-TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
+TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM").strip()
 API_KEY_IA = os.environ.get("API_KEY_IA")
 PAYMENT_TOKEN_TEST = str(os.environ.get("PAYMENT_TOKEN_TEST", "")).strip()
 MONGO_URI = os.environ.get("MONGO_URI")

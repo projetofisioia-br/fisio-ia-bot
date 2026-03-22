@@ -81,42 +81,57 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
     user_id = message.from_user.id
     user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
     
+    # Verificação de Limite
     if user_data.get("plano") != "PRO" and user_data.get("consultas", 0) >= 3:
-        bot.send_message(message.chat.id, "⚠️ Limite atingido! Assine o Pro para gerar PDFs e continuar.", reply_markup=menu_principal())
+        bot.send_message(message.chat.id, "⚠️ **Limite Free Atingido.** Assine o Pro para suporte PhD ilimitado.", reply_markup=menu_principal())
         return
 
     aguarde = bot.send_message(message.chat.id, "🧠 **Gerando raciocínio clínico PhD...**")
+    
+    # Endpoint do Gemini 1.5 Flash
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
     
+    # Headers obrigatórios para evitar erro 400/403
+    headers = {'Content-Type': 'application/json'}
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA: {texto_usuario}"}]
+        }]
+    }
+
     try:
-        payload = {"contents": [{"parts": [{"text": f"{PROMPT_SISTEMA}\n\nCASO: {texto_usuario}"}]}]}
-        response = requests.post(url, json=payload, timeout=60)
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
         res_data = response.json()
         
         if 'candidates' in res_data:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
-            bot.delete_message(message.chat.id, aguarde.message_id)
             
-            # Salva no Histórico
+            # Salva no Histórico do Paciente (Se houver nome)
             if nome_paciente:
                 pacientes_coll.update_one(
-                    {"profissional_id": user_id, "nome": nome_paciente},
-                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}}, upsert=True
+                    {"profissional_id": user_id, "nome": nome_paciente.upper()},
+                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
+                    upsert=True
                 )
             
+            # Incrementa consulta no perfil do profissional
             usuarios_coll.update_one({"user_id": user_id}, {"$inc": {"consultas": 1}}, upsert=True)
             
-            for parte in [analise[i:i+4000] for i in range(0, len(analise), 4000)]:
-                bot.send_message(message.chat.id, parte, parse_mode="Markdown")
-
-            # Se for Pro, oferece gerar PDF
-            if user_data.get("plano") == "PRO" and nome_paciente:
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("📄 Gerar PDF Home Care", callback_data=f"pdf_{nome_paciente}"))
-                bot.send_message(message.chat.id, "✨ Análise pronta! Deseja gerar o documento para o paciente?", reply_markup=markup)
+            bot.delete_message(message.chat.id, aguarde.message_id)
+            
+            # Envio parcelado (Telegram limita 4096 caracteres)
+            for i in range(0, len(analise), 4000):
+                bot.send_message(message.chat.id, analise[i:i+4000], parse_mode="Markdown")
+        
         else:
-            bot.send_message(message.chat.id, "⚠️ Erro na IA.")
-    except: bot.send_message(message.chat.id, "❌ Falha técnica.")
+            # MOSTRA O ERRO REAL DO GOOGLE NO CHAT
+            msg_erro = res_data.get('error', {}).get('message', 'Erro desconhecido')
+            bot.edit_message_text(f"⚠️ Erro na IA (Google diz): {msg_erro}", message.chat.id, aguarde.message_id)
+
+    except Exception as e:
+        bot.edit_message_text(f"❌ Falha técnica: {str(e)}", message.chat.id, aguarde.message_id)
+
 
 # --- HANDLERS ---
 @bot.callback_query_handler(func=lambda call: True)

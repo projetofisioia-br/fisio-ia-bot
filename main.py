@@ -16,7 +16,7 @@ TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM")
 API_KEY_IA = os.environ.get("API_KEY_IA")
 MODELO = "gemini-2.5-flash"
 MONGO_URI = os.environ.get("MONGO_URI") # NOVO: Variável do banco
-TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT") # NOVO: Variável de pagamento
+TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 
 # --- CONEXÃO BANCO DE DADOS (NOVO) ---
 client = MongoClient(MONGO_URI)

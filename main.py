@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V6.7 - IA Estável"
+def home(): return "MestreFisio V6.8 - IA Restaurada"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -17,45 +17,39 @@ API_KEY_IA = os.environ.get("API_KEY_IA", "").strip()
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 
+MODELO = "gemini-1.5-flash"
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
-# Banco de Dados
 client = MongoClient(MONGO_URI)
 db = client['mestre_fisio_db']
 usuarios_coll = db['usuarios']
 pacientes_coll = db['pacientes']
 
-PROMPT_SISTEMA = "Atue como um Fisioterapeuta PhD. Forneça análise em 15 tópicos técnicos estruturados."
+PROMPT_SISTEMA = "Atue como um Fisioterapeuta PhD. Forneça análise em 15 tópicos técnicos."
 
-# --- LÓGICA DE IA (URL DIRETA) ---
+# --- LÓGICA DE IA (RESTAURADA À VERSÃO QUE FUNCIONAVA) ---
 def chamar_ia(message, texto_usuario, nome_paciente=None):
     user_id = message.from_user.id
     user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
     
     if user_data.get("plano") != "PRO" and user_data.get("consultas", 0) >= 3:
-        bot.send_message(message.chat.id, "⚠️ Limite atingido. Assine o Pro para continuar.", reply_markup=menu_principal())
+        bot.send_message(message.chat.id, "⚠️ Limite Free atingido. Assine o Pro!", reply_markup=menu_principal())
         return
 
-    aguarde = bot.send_message(message.chat.id, "🧠 **Gerando raciocínio clínico PhD...**")
+    aguarde = bot.send_message(message.chat.id, "🧠 **Analisando quadro clínico...**")
     
-    # URL DIRETA E SEM VARIÁVEIS DE NOME DE MODELO (MAIS SEGURO)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY_IA}"
+    # URL idêntica à versão que funcionou primeiro
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
     
-    payload = {
-        "contents": [{
-            "parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA: {texto_usuario}"}]
-        }]
-    }
-
     try:
-        # Request com Timeout estendido
-        response = requests.post(url, json=payload, timeout=90)
+        payload = {"contents": [{"parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA: {texto_usuario}"}]}]}
+        response = requests.post(url, json=payload, timeout=60)
         res_data = response.json()
         
         if 'candidates' in res_data:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
             
-            # Salva no Histórico do Profissional
+            # Histórico individualizado
             if nome_paciente:
                 pacientes_coll.update_one(
                     {"profissional_id": user_id, "nome": nome_paciente.upper()},
@@ -69,11 +63,9 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
             for i in range(0, len(analise), 4000):
                 bot.send_message(message.chat.id, analise[i:i+4000], parse_mode="Markdown")
         else:
-            erro_msg = res_data.get('error', {}).get('message', 'Erro na resposta do Google')
-            bot.edit_message_text(f"⚠️ Resposta do Google: {erro_msg}", message.chat.id, aguarde.message_id)
-
+            bot.edit_message_text(f"⚠️ Erro na IA: {res_data}", message.chat.id, aguarde.message_id)
     except Exception as e:
-        bot.edit_message_text(f"❌ Falha de conexão: {str(e)}", message.chat.id, aguarde.message_id)
+        bot.edit_message_text(f"❌ Falha técnica: {e}", message.chat.id, aguarde.message_id)
 
 # --- MENUS E BOTÕES ---
 def menu_principal():
@@ -90,22 +82,19 @@ def menu_principal():
 def callback_geral(call):
     if call.data == "novo_paciente":
         msg = bot.send_message(call.message.chat.id, "📝 Nome do Paciente:")
-        bot.register_next_step_handler(msg, lambda m: bot.register_next_step_handler(
-            bot.send_message(m.chat.id, f"✅ Paciente: {m.text.upper()}\nDescreva o quadro:"),
-            lambda m2: chamar_ia(m2, m2.text, m.text.upper())
-        ))
+        bot.register_next_step_handler(msg, obter_nome)
     elif call.data == "ver_historico":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
         if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Nenhum paciente no histórico.")
+            bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
         else:
-            msg_h = "📂 **Seus Pacientes:**\n"
-            for p in pacientes: msg_h += f"• {p['nome']} ({p['data']})\n"
-            bot.send_message(call.message.chat.id, msg_h)
+            txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
+            bot.send_message(call.message.chat.id, txt)
     elif call.data == "duvida_tecnica":
         msg = bot.send_message(call.message.chat.id, "💡 Qual sua dúvida?")
         bot.register_next_step_handler(msg, lambda m: chamar_ia(m, m.text))
     elif call.data == "planos":
+        # Pagamento estável Smart Glocal
         bot.send_invoice(
             call.message.chat.id, "MestreFisio PhD Pro 💎", "Acesso ilimitado.",
             TOKEN_PAYMENT, "BRL", [types.LabeledPrice("Pro", 5990)],
@@ -113,11 +102,15 @@ def callback_geral(call):
         )
     bot.answer_callback_query(call.id)
 
+def obter_nome(m):
+    nome = m.text.upper()
+    msg = bot.send_message(m.chat.id, f"✅ Paciente {nome}\nDescreva o quadro:")
+    bot.register_next_step_handler(msg, lambda m2: chamar_ia(m2, m2.text, nome))
+
 @bot.message_handler(commands=['start'])
 def start(m):
     bot.send_message(m.chat.id, "🚀 **MestreFisio PhD**", reply_markup=menu_principal())
 
 if __name__ == "__main__":
     Thread(target=run).start()
-    bot.remove_webhook()
     bot.infinity_polling(timeout=120)

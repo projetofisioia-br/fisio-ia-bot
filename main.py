@@ -69,7 +69,7 @@ def enviar_fatura(call):
             call.message.chat.id,
             title="MestreFisio PhD Pro 💎",
             description=TEXTOS[lang]['pay_desc'],
-            provider_token=PAYMENT_TOKEN_TEST,
+            provider_token=TOKEN_PAYMENT,
             currency=moeda,
             prices=[types.LabeledPrice(label="Assinatura Mensal", amount=preco)],
             start_parameter="mestre-fisio-pro",

@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.5 - Online"
+def home(): return "MestreFisio V7.6 - IA Estável"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -24,15 +24,12 @@ db = client['mestre_fisio_db']
 usuarios_coll = db['usuarios']
 pacientes_coll = db['pacientes']
 
-# Prompt reforçado para evitar bloqueios de segurança
 PROMPT_SISTEMA = (
-    "CONTEXTO: Uso estritamente profissional e acadêmico de fisioterapia. "
-    "REQUERENTE: Fisioterapeuta PhD. "
-    "AÇÃO: Forneça análise técnica baseada em evidências em 15 tópicos. "
-    "NÃO forneça avisos médicos genéricos, foque apenas na biomecânica e raciocínio clínico."
+    "Atue como um Fisioterapeuta PhD. Forneça análise biomecânica técnica. "
+    "Esta é uma discussão acadêmica entre profissionais de saúde."
 )
 
-# --- LÓGICA DE IA (ESTRUTURA DE BYPASS REFORÇADA) ---
+# --- LÓGICA DE IA (MUDANÇA PARA ROTA ESTÁVEL v1) ---
 def chamar_ia(message, texto_usuario, nome_paciente=None):
     user_id = message.from_user.id
     user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
@@ -41,24 +38,19 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
         bot.send_message(message.chat.id, "⚠️ Limite atingido. Assine o Pro!", reply_markup=menu_principal())
         return
 
-    aguarde = bot.send_message(message.chat.id, "🧠 **Processando raciocínio clínico...**")
+    aguarde = bot.send_message(message.chat.id, "🧠 **Analisando quadro clínico...**")
     
-    # URL estável v1beta
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY_IA}"
+    # MUDANÇA CRÍTICA: Usando /v1/ em vez de /v1beta/ para máxima estabilidade
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={API_KEY_IA}"
     
     payload = {
-        "contents": [{"parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA TÉCNICA: {texto_usuario}"}]}],
+        "contents": [{"parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA: {texto_usuario}"}]}],
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "topP": 0.8,
-            "topK": 40
-        }
+        ]
     }
 
     try:
@@ -81,11 +73,11 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
             for i in range(0, len(analise), 4000):
                 bot.send_message(message.chat.id, analise[i:i+4000], parse_mode="Markdown")
         else:
-            # Mostra o erro real para sabermos se é a chave ou o filtro
-            erro_google = res_data.get('error', {}).get('message', 'Filtro de Segurança Ativado')
-            bot.edit_message_text(f"⚠️ Nota da IA: {erro_google}", message.chat.id, aguarde.message_id)
+            # Reporta erro detalhado se o Google bloquear
+            msg_erro = res_data.get('error', {}).get('message', 'Bloqueio de Segurança')
+            bot.edit_message_text(f"⚠️ Nota da IA: {msg_erro}", message.chat.id, aguarde.message_id)
     except Exception as e:
-        bot.edit_message_text(f"❌ Erro de conexão: {str(e)}", message.chat.id, aguarde.message_id)
+        bot.edit_message_text(f"❌ Falha técnica: {str(e)}", message.chat.id, aguarde.message_id)
 
 # --- MENUS ---
 def menu_principal():
@@ -98,7 +90,6 @@ def menu_principal():
     )
     return markup
 
-# --- TRATAMENTO DE PAGAMENTO E CLIQUES ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_geral(call):
     if call.data == "novo_paciente":
@@ -115,24 +106,22 @@ def callback_geral(call):
         msg = bot.send_message(call.message.chat.id, "💡 Qual sua dúvida?")
         bot.register_next_step_handler(msg, lambda m: chamar_ia(m, m.text))
     elif call.data == "planos":
-        try:
-            bot.send_invoice(
-                call.message.chat.id, 
-                title="MestreFisio PhD Pro 💎", 
-                description="Acesso ilimitado às análises clínicas.",
-                provider_token=TOKEN_PAYMENT,
-                currency="BRL",
-                prices=[types.LabeledPrice("Assinatura Pro", 5990)],
-                invoice_payload="pro_access",
-                start_parameter="pro_access"
-            )
-        except Exception as e:
-            bot.send_message(call.message.chat.id, f"❌ Erro no Provedor: Verifique o TOKEN_PAYMENT no Render.\nDetalhe: {str(e)}")
+        # Estrutura de pagamento que você confirmou que funciona!
+        bot.send_invoice(
+            call.message.chat.id, 
+            title="MestreFisio PhD Pro 💎", 
+            description="Acesso ilimitado às análises clínicas.",
+            provider_token=TOKEN_PAYMENT,
+            currency="BRL",
+            prices=[types.LabeledPrice("Assinatura Pro", 5990)],
+            invoice_payload="pro_access",
+            start_parameter="pro_access"
+        )
     bot.answer_callback_query(call.id)
 
 def obter_nome(m):
     nome = m.text.upper()
-    msg = bot.send_message(m.chat.id, f"✅ Paciente {nome}\nDescreva o quadro clínico:")
+    msg = bot.send_message(m.chat.id, f"✅ Paciente {nome}\nDescreva o quadro:")
     bot.register_next_step_handler(msg, lambda m2: chamar_ia(m2, m2.text, nome))
 
 @bot.message_handler(commands=['start'])

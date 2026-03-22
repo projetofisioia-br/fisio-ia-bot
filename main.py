@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.6 - IA Estável"
+def home(): return "MestreFisio V7.7 - Online"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -24,12 +24,9 @@ db = client['mestre_fisio_db']
 usuarios_coll = db['usuarios']
 pacientes_coll = db['pacientes']
 
-PROMPT_SISTEMA = (
-    "Atue como um Fisioterapeuta PhD. Forneça análise biomecânica técnica. "
-    "Esta é uma discussão acadêmica entre profissionais de saúde."
-)
+PROMPT_SISTEMA = "Atue como um Fisioterapeuta PhD. Forneça análise biomecânica técnica."
 
-# --- LÓGICA DE IA (MUDANÇA PARA ROTA ESTÁVEL v1) ---
+# --- LÓGICA DE IA (AJUSTE DE MODELO PARA API v1) ---
 def chamar_ia(message, texto_usuario, nome_paciente=None):
     user_id = message.from_user.id
     user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
@@ -40,8 +37,8 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
 
     aguarde = bot.send_message(message.chat.id, "🧠 **Analisando quadro clínico...**")
     
-    # MUDANÇA CRÍTICA: Usando /v1/ em vez de /v1beta/ para máxima estabilidade
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={API_KEY_IA}"
+    # URL e Modelo ajustados para a versão mais estável da API
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY_IA}"
     
     payload = {
         "contents": [{"parts": [{"text": f"{PROMPT_SISTEMA}\n\nPERGUNTA: {texto_usuario}"}]}],
@@ -57,7 +54,13 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
         response = requests.post(url, json=payload, timeout=60)
         res_data = response.json()
         
-        if 'candidates' in res_data and 'content' in res_data['candidates'][0]:
+        # Se o flash falhar, tentamos o pro automaticamente (fallback)
+        if 'error' in res_data and 'not found' in res_data['error']['message']:
+            url_alt = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={API_KEY_IA}"
+            response = requests.post(url_alt, json=payload, timeout=60)
+            res_data = response.json()
+
+        if 'candidates' in res_data:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
             
             if nome_paciente:
@@ -73,13 +76,12 @@ def chamar_ia(message, texto_usuario, nome_paciente=None):
             for i in range(0, len(analise), 4000):
                 bot.send_message(message.chat.id, analise[i:i+4000], parse_mode="Markdown")
         else:
-            # Reporta erro detalhado se o Google bloquear
-            msg_erro = res_data.get('error', {}).get('message', 'Bloqueio de Segurança')
-            bot.edit_message_text(f"⚠️ Nota da IA: {msg_erro}", message.chat.id, aguarde.message_id)
+            erro_txt = res_data.get('error', {}).get('message', 'Erro de resposta')
+            bot.edit_message_text(f"⚠️ Nota da IA: {erro_txt}", message.chat.id, aguarde.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Falha técnica: {str(e)}", message.chat.id, aguarde.message_id)
 
-# --- MENUS ---
+# --- MENUS E PAGAMENTO ---
 def menu_principal():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -106,7 +108,6 @@ def callback_geral(call):
         msg = bot.send_message(call.message.chat.id, "💡 Qual sua dúvida?")
         bot.register_next_step_handler(msg, lambda m: chamar_ia(m, m.text))
     elif call.data == "planos":
-        # Estrutura de pagamento que você confirmou que funciona!
         bot.send_invoice(
             call.message.chat.id, 
             title="MestreFisio PhD Pro 💎", 

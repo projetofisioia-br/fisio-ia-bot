@@ -4,3 +4,4 @@ flask
 pymongo
 dnspython
 fpdf
+reportlab

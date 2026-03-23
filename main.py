@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V4.7 - Estabilidade de Fluxo PhD Ativa"
+def home(): return "MestreFisio V5.0 - Memória Clínica Inteligente Ativa 🧠"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -30,10 +30,26 @@ bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 client = MongoClient(MONGO_URI)
 db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
-
-# --- CONTROLE DE USO ---
 uso_coll = db['uso_usuarios']
 
+# --- MEMÓRIA CLÍNICA INTELIGENTE ---
+def montar_memoria_clinica(paciente):
+    memoria = ""
+
+    if paciente.get("ultima_analise"):
+        memoria += f"\nÚltima análise:\n{paciente['ultima_analise'][:800]}"
+
+    if paciente.get("evolucao"):
+        memoria += f"\nEvolução:\n{paciente['evolucao'][-800:]}"
+
+    if paciente.get("registros_clinicos"):
+        memoria += "\nRegistros adicionais:\n"
+        for r in paciente["registros_clinicos"][-5:]:
+            memoria += f"- ({r['data']}) {r['info']}\n"
+
+    return memoria.strip()
+
+# --- CONTROLE DE USO ---
 LIMITE_GRATUITO = 5
 
 def pode_usar(user_id):
@@ -52,8 +68,6 @@ def pode_usar(user_id):
     uso_coll.update_one({"user_id": user_id}, {"$inc": {"uso": 1}})
     return True
 
-bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
-
 # --- PROMPT ---
 PROMPT_SISTEMA = """
 Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios (Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências). 
@@ -67,6 +81,7 @@ def menu_principal():
         types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente"),
         types.InlineKeyboardButton("📂 Histórico de Pacientes", callback_data="ver_historico"),
         types.InlineKeyboardButton("📝 Atualizar Prontuário", callback_data="atualizar_prontuario"),
+        types.InlineKeyboardButton("➕ Adicionar Informação Clínica", callback_data="add_info"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
     )
@@ -76,7 +91,7 @@ def menu_principal():
 def send_welcome(message):
     bot.send_message(
         message.chat.id,
-        "🚀 **MestreFisio V4.7 Especialista**\nSistema de alta performance para análises profundas.",
+        "🚀 **MestreFisio V5.0 Especialista**\nAgora com memória clínica inteligente.",
         reply_markup=menu_principal()
     )
 
@@ -134,6 +149,34 @@ def callback_query(call):
         msg = bot.send_message(call.message.chat.id, texto + "\n\n✍️ Envie nova evolução:")
         bot.register_next_step_handler(msg, salvar_evolucao, nome)
 
+    elif call.data == "add_info":
+
+        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+
+        if not pacientes:
+            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(
+                f"{p['nome']}",
+                callback_data=f"addinfo_{p['nome']}"
+            ))
+
+        bot.send_message(call.message.chat.id, "➕ Selecione o paciente:", reply_markup=markup)
+
+    elif call.data.startswith("addinfo_"):
+        nome = call.data.replace("addinfo_", "")
+
+        msg = bot.send_message(
+            call.message.chat.id,
+            f"🧠 Envie a nova informação clínica para {nome}:"
+        )
+
+        bot.register_next_step_handler(msg, adicionar_info_clinica, nome)
+
     elif call.data == "planos":
         try:
             bot.send_invoice(
@@ -152,18 +195,39 @@ def callback_query(call):
 # --- FLUXO PACIENTE ---
 def obter_nome_paciente(message):
     nome = message.text.upper().strip()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico para análise:")
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico:")
     bot.register_next_step_handler(msg, processar_ia_paciente, nome)
 
 def processar_ia_paciente(message, nome):
-    prompt = f"{PROMPT_SISTEMA}\n\nAnalise detalhadamente o caso do paciente {nome}: {message.text}"
+
+    paciente = pacientes_coll.find_one({
+        "profissional_id": message.from_user.id,
+        "nome": nome
+    }) or {}
+
+    memoria = montar_memoria_clinica(paciente)
+
+    prompt = f"""
+{PROMPT_SISTEMA}
+
+Paciente: {nome}
+
+Histórico clínico:
+{memoria}
+
+Nova informação:
+{message.text}
+
+Atualize o raciocínio considerando toda evolução.
+"""
+
     chamar_gemini(message, prompt, nome)
 
 def processar_ia_direta(message):
-    prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
+    prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
     chamar_gemini(message, prompt)
 
-# --- NOVA FUNÇÃO ---
+# --- EVOLUÇÃO ---
 def salvar_evolucao(message, nome):
     nova_info = message.text
 
@@ -182,24 +246,34 @@ def salvar_evolucao(message, nome):
         upsert=True
     )
 
-    bot.send_message(message.chat.id, "✅ Evolução salva com sucesso!", reply_markup=menu_principal())
+    bot.send_message(message.chat.id, "✅ Evolução salva!", reply_markup=menu_principal())
 
-# --- IA ORIGINAL (INTACTA) ---
+# --- NOVA INFO CLÍNICA ---
+def adicionar_info_clinica(message, nome):
+
+    pacientes_coll.update_one(
+        {"profissional_id": message.from_user.id, "nome": nome},
+        {
+            "$push": {
+                "registros_clinicos": {
+                    "data": time.strftime("%d/%m/%Y"),
+                    "info": message.text
+                }
+            }
+        },
+        upsert=True
+    )
+
+    bot.send_message(message.chat.id, "✅ Informação adicionada!", reply_markup=menu_principal())
+
+# --- IA ---
 def chamar_gemini(message, prompt, nome_paciente=None):
 
-    # --- CONTROLE DE USO ---
     if not pode_usar(message.from_user.id):
-        bot.send_message(
-            message.chat.id,
-            "🚫 Você atingiu o limite gratuito.\n\n💎 Faça upgrade para acesso ilimitado.",
-            reply_markup=menu_principal()
-        )
+        bot.send_message(message.chat.id, "🚫 Limite atingido.")
         return
 
-    aguarde = bot.send_message(
-        message.chat.id,
-        "🧠 **Construindo raciocínio clínico...**\nIsso pode levar até 90s devido à complexidade da estrutura de 15 tópicos."
-    )
+    aguarde = bot.send_message(message.chat.id, "🧠 Processando...")
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
 
@@ -219,23 +293,15 @@ def chamar_gemini(message, prompt, nome_paciente=None):
 
             bot.delete_message(message.chat.id, aguarde.message_id)
 
-            partes = [analise[i:i+1500] for i in range(0, len(analise), 1500)]
+            for p in [analise[i:i+1500] for i in range(0, len(analise), 1500)]:
+                bot.send_message(message.chat.id, p)
+                time.sleep(1)
 
-            for p in partes:
-                try:
-                    bot.send_message(message.chat.id, p, parse_mode="Markdown")
-                    time.sleep(1.2)
-                except:
-                    bot.send_message(message.chat.id, p)
-
-            bot.send_message(message.chat.id, "✅ **Análise Finalizada com Sucesso.**", reply_markup=menu_principal())
-
-        else:
-            bot.send_message(message.chat.id, "⚠️ A IA não conseguiu estruturar todos os tópicos.")
+            bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal())
 
     except Exception as e:
-        print(f"Erro: {e}")
-        bot.send_message(message.chat.id, "❌ Falha na conexão técnica.")
+        print(e)
+        bot.send_message(message.chat.id, "❌ Erro na IA.")
 
 # --- EXECUÇÃO ---
 if __name__ == "__main__":

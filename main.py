@@ -3,26 +3,15 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
 
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.1 - Estável"
+def home(): return "MestreFisio V4.7 - Estabilidade de Fluxo PhD Ativa"
 
-@app.route('/pacientes/<user_id>')
-def listar_pacientes(user_id):
-    pacientes = list(pacientes_coll.find({"profissional_id": int(user_id)}))
-    return {"pacientes": [
-        {"nome": p["nome"], "evolucoes": len(p.get("evolucoes", []))}
-        for p in pacientes
-    ]}
+def run(): app.run(host='0.0.0.0', port=10000)
 
-def run():
-    app.run(host='0.0.0.0', port=10000)
-
-# --- CONFIG ---
+# --- CONFIGURAÇÕES ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM", "").strip()
 API_KEY_IA = os.environ.get("API_KEY_IA", "").strip()
 MODELO = "gemini-2.5-flash"
@@ -49,7 +38,7 @@ LIMITE_GRATUITO = 5
 
 def pode_usar(user_id):
     if is_admin(user_id):
-        return True  # ADMIN ILIMITADO
+        return True
 
     user = uso_coll.find_one({"user_id": user_id})
 
@@ -63,247 +52,139 @@ def pode_usar(user_id):
     uso_coll.update_one({"user_id": user_id}, {"$inc": {"uso": 1}})
     return True
 
-# --- PDF ---
-def gerar_pdf_paciente(chat_id, paciente):
-    nome_arquivo = f"/mnt/data/{paciente['nome']}.pdf"
-    doc = SimpleDocTemplate(nome_arquivo)
-    styles = getSampleStyleSheet()
-    conteudo = []
+bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
-    conteudo.append(Paragraph(f"Prontuário - {paciente['nome']}", styles['Title']))
-    conteudo.append(Spacer(1, 12))
-
-    for evo in paciente.get("evolucoes", []):
-        conteudo.append(Paragraph(
-            f"{evo['data']}<br/>{evo['relato']}<br/>{evo['analise']}",
-            styles['Normal']
-        ))
-        conteudo.append(Spacer(1, 10))
-
-    doc.build(conteudo)
-
-    with open(nome_arquivo, "rb") as f:
-        bot.send_document(chat_id, f)
-
-# --- RESUMO ---
-def gerar_resumo(paciente):
-    textos = "\n".join([e["relato"] for e in paciente.get("evolucoes", [])])
-    if not textos:
-        return "Sem dados."
-
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}",
-        json={"contents": [{"parts": [{"text": f"Resuma clinicamente:\n{textos}"}]}]}
-    )
-
-    try:
-        return response.json()['candidates'][0]['content']['parts'][0]['text']
-    except:
-        return "Erro resumo"
-
-# --- MÉTRICAS ---
-def obter_metricas():
-    total_usuarios = usuarios_coll.count_documents({})
-    total_pacientes = pacientes_coll.count_documents({})
-    pro_users = usuarios_coll.count_documents({"plano": "PRO"})
-
-    return f"""
-📊 MÉTRICAS
-
-👥 Usuários: {total_usuarios}
-💎 PRO: {pro_users}
-🧠 Pacientes: {total_pacientes}
+# --- PROMPT ---
+PROMPT_SISTEMA = """
+Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios (Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências). 
+Use linguagem científica de alto nível e formatação Markdown clara.
 """
-
-# --- USUÁRIOS PESADOS ---
-def usuarios_pesados():
-    users = usuarios_coll.find({"consultas": {"$gt": 50}})
-    lista = [f"{u['user_id']} → {u.get('consultas',0)}" for u in users]
-    return "🚨 Alto uso:\n\n" + "\n".join(lista) if lista else "Nenhum abuso detectado."
 
 # --- MENU ---
 def menu_principal():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente"),
-        types.InlineKeyboardButton("🧠 Atualizar", callback_data="atualizar_paciente"),
-        types.InlineKeyboardButton("📂 Histórico", callback_data="ver_historico"),
-        types.InlineKeyboardButton("📄 PDF", callback_data="gerar_pdf"),
-        types.InlineKeyboardButton("📊 Resumo", callback_data="resumo"),
-        types.InlineKeyboardButton("💎 PRO", callback_data="planos"),
-        types.InlineKeyboardButton("⚙️ Admin", callback_data="admin")
+        types.InlineKeyboardButton("📂 Histórico de Pacientes", callback_data="ver_historico"),
+        types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
+        types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
     )
     return markup
 
-# --- START ---
 @bot.message_handler(commands=['start'])
-def start(message):
-    if not usuarios_coll.find_one({"user_id": message.from_user.id}):
-        usuarios_coll.insert_one({
-            "user_id": message.from_user.id,
-            "plano": "FREE",
-            "consultas": 0
-        })
-
-        for admin in ADMIN_IDS:
-            bot.send_message(admin, f"🚀 Novo usuário: {message.from_user.id}")
-
-    bot.send_message(message.chat.id, "MestreFisio V7.1", reply_markup=menu_principal())
+def send_welcome(message):
+    bot.send_message(
+        message.chat.id,
+        "🚀 **MestreFisio V4.7 Especialista**\nSistema de alta performance para análises profundas.",
+        reply_markup=menu_principal()
+    )
 
 # --- CALLBACK ---
 @bot.callback_query_handler(func=lambda call: True)
-def callback(call):
+def callback_query(call):
     bot.answer_callback_query(call.id)
 
     if call.data == "novo_paciente":
-        msg = bot.send_message(call.message.chat.id, "Nome:")
-        bot.register_next_step_handler(msg, obter_nome)
+        msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
+        bot.register_next_step_handler(msg, obter_nome_paciente)
 
-    elif call.data == "atualizar_paciente":
-        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-        markup = types.InlineKeyboardMarkup()
-        for p in pacientes:
-            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"pac_{p['nome']}"))
-        bot.send_message(call.message.chat.id, "Selecione:", reply_markup=markup)
-
-    elif call.data.startswith("pac_"):
-        nome = call.data.replace("pac_", "")
-        msg = bot.send_message(call.message.chat.id, f"Atualizar {nome}:")
-        bot.register_next_step_handler(msg, lambda m: processar(m, nome))
+    elif call.data == "duvida_tecnica":
+        msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
+        bot.register_next_step_handler(msg, processar_ia_direta)
 
     elif call.data == "ver_historico":
-        pacientes = pacientes_coll.find({"profissional_id": call.from_user.id})
-        for p in pacientes:
-            bot.send_message(call.message.chat.id, f"{p['nome']} ({len(p.get('evolucoes', []))})")
-
-    elif call.data == "gerar_pdf":
-        pacientes = pacientes_coll.find({"profissional_id": call.from_user.id})
-        markup = types.InlineKeyboardMarkup()
-        for p in pacientes:
-            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"pdf_{p['nome']}"))
-        bot.send_message(call.message.chat.id, "Selecione:", reply_markup=markup)
-
-    elif call.data.startswith("pdf_"):
-        nome = call.data.replace("pdf_", "")
-        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
-        gerar_pdf_paciente(call.message.chat.id, paciente)
-
-    elif call.data == "resumo":
-        pacientes = pacientes_coll.find({"profissional_id": call.from_user.id})
-        markup = types.InlineKeyboardMarkup()
-        for p in pacientes:
-            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"res_{p['nome']}"))
-        bot.send_message(call.message.chat.id, "Selecione:", reply_markup=markup)
-
-    elif call.data.startswith("res_"):
-        nome = call.data.replace("res_", "")
-        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
-        bot.send_message(call.message.chat.id, gerar_resumo(paciente))
+        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+        if not pacientes:
+            bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
+        else:
+            txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
+            bot.send_message(call.message.chat.id, txt)
 
     elif call.data == "planos":
-        bot.send_invoice(
-            chat_id=call.message.chat.id,
-            title="PRO",
-            description="Acesso ilimitado",
-            provider_token=TOKEN_PAYMENT,
-            currency="BRL",
-            prices=[types.LabeledPrice("Plano PRO", 5990)],
-            invoice_payload="pro"
+        try:
+            bot.send_invoice(
+                chat_id=call.message.chat.id,
+                title="MestreFisio PhD Pro 💎",
+                description="Acesso ilimitado às análises.",
+                provider_token=TOKEN_PAYMENT,
+                currency="BRL",
+                prices=[types.LabeledPrice("Assinatura Pro", 5990)],
+                invoice_payload="pro_access",
+                start_parameter="pro_access"
+            )
+        except Exception as e:
+            bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
+
+# --- FLUXO PACIENTE ---
+def obter_nome_paciente(message):
+    nome = message.text.upper().strip()
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico para análise:")
+    bot.register_next_step_handler(msg, processar_ia_paciente, nome)
+
+def processar_ia_paciente(message, nome):
+    prompt = f"{PROMPT_SISTEMA}\n\nAnalise detalhadamente o caso do paciente {nome}: {message.text}"
+    chamar_gemini(message, prompt, nome)
+
+def processar_ia_direta(message):
+    prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
+    chamar_gemini(message, prompt)
+
+# --- IA ORIGINAL (INTACTA) ---
+def chamar_gemini(message, prompt, nome_paciente=None):
+
+    # --- CONTROLE DE USO ---
+    if not pode_usar(message.from_user.id):
+        bot.send_message(
+            message.chat.id,
+            "🚫 Você atingiu o limite gratuito.\n\n💎 Faça upgrade para acesso ilimitado.",
+            reply_markup=menu_principal()
         )
+        return
 
-    # --- ADMIN ---
-    elif call.data == "admin":
-        if call.from_user.id not in ADMIN_IDS:
-            return
-
-        markup = types.InlineKeyboardMarkup()
-        markup.add(
-            types.InlineKeyboardButton("📊 Métricas", callback_data="adm_m"),
-            types.InlineKeyboardButton("🚨 Uso alto", callback_data="adm_u"),
-            types.InlineKeyboardButton("👥 Usuários", callback_data="adm_l")
-        )
-        bot.send_message(call.message.chat.id, "Admin:", reply_markup=markup)
-
-    elif call.data == "adm_m":
-        if call.from_user.id in ADMIN_IDS:
-            bot.send_message(call.message.chat.id, obter_metricas())
-
-    elif call.data == "adm_u":
-        if call.from_user.id in ADMIN_IDS:
-            bot.send_message(call.message.chat.id, usuarios_pesados())
-
-    elif call.data == "adm_l":
-        if call.from_user.id in ADMIN_IDS:
-            users = usuarios_coll.find().limit(20)
-            texto = "\n".join([f"{u['user_id']} | {u.get('plano','FREE')}" for u in users])
-            bot.send_message(call.message.chat.id, texto)
-
-# --- PAGAMENTO ---
-@bot.pre_checkout_query_handler(func=lambda q: True)
-def checkout(q):
-    bot.answer_pre_checkout_query(q.id, ok=True)
-
-@bot.message_handler(content_types=['successful_payment'])
-def pagamento(message):
-    usuarios_coll.update_one(
-        {"user_id": message.from_user.id},
-        {"$set": {"plano": "PRO", "consultas": 0}},
-        upsert=True
+    aguarde = bot.send_message(
+        message.chat.id,
+        "🧠 **Construindo raciocínio clínico...**\nIsso pode levar até 90s devido à complexidade da estrutura de 15 tópicos."
     )
-    bot.send_message(message.chat.id, "💎 PRO ativo")
 
-# --- IA ---
-def processar(message, nome=None):
-    user_id = message.from_user.id
-    user = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
-
-    if user_id not in ADMIN_IDS:
-        if user["plano"] != "PRO" and user["consultas"] >= 3:
-            bot.send_message(message.chat.id, "Limite FREE atingido.")
-            return
-
-    bot.send_message(message.chat.id, "Processando...")
-
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}",
-        json={"contents": [{"parts": [{"text": message.text}]}]}
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
 
     try:
-        resposta = response.json()['candidates'][0]['content']['parts'][0]['text']
-    except:
-        resposta = "Erro IA"
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=400)
+        res_data = response.json()
 
-    if nome:
-        pacientes_coll.update_one(
-            {"profissional_id": user_id, "nome": nome},
-            {"$push": {"evolucoes": {
-                "data": time.strftime("%d/%m/%Y"),
-                "relato": message.text,
-                "analise": resposta
-            }}},
-            upsert=True
-        )
+        if 'candidates' in res_data:
+            analise = res_data['candidates'][0]['content']['parts'][0]['text']
 
-    usuarios_coll.update_one(
-        {"user_id": user_id},
-        {"$inc": {"consultas": 1}},
-        upsert=True
-    )
+            if nome_paciente:
+                pacientes_coll.update_one(
+                    {"profissional_id": message.from_user.id, "nome": nome_paciente},
+                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
+                    upsert=True
+                )
 
-    # ALERTA ADMIN
-    if user.get("consultas", 0) > 50:
-        for admin in ADMIN_IDS:
-            bot.send_message(admin, f"🚨 Usuário {user_id} alto uso")
+            bot.delete_message(message.chat.id, aguarde.message_id)
 
-    bot.send_message(message.chat.id, resposta)
+            partes = [analise[i:i+1500] for i in range(0, len(analise), 1500)]
 
-def obter_nome(message):
-    nome = message.text.upper()
-    msg = bot.send_message(message.chat.id, f"{nome} - descreva:")
-    bot.register_next_step_handler(msg, lambda m: processar(m, nome))
+            for p in partes:
+                try:
+                    bot.send_message(message.chat.id, p, parse_mode="Markdown")
+                    time.sleep(1.2)
+                except:
+                    bot.send_message(message.chat.id, p)
 
-# --- EXEC ---
+            bot.send_message(message.chat.id, "✅ **Análise Finalizada com Sucesso.**", reply_markup=menu_principal())
+
+        else:
+            bot.send_message(message.chat.id, "⚠️ A IA não conseguiu estruturar todos os tópicos.")
+
+    except Exception as e:
+        print(f"Erro: {e}")
+        bot.send_message(message.chat.id, "❌ Falha na conexão técnica.")
+
+# --- EXECUÇÃO ---
 if __name__ == "__main__":
     Thread(target=run).start()
-    bot.infinity_polling(skip_pending=True)
+    bot.remove_webhook()
+    time.sleep(2)
+    bot.infinity_polling(timeout=120, long_polling_timeout=60)

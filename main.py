@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V5.0 - Memória Clínica Inteligente Ativa 🧠"
+def home(): return "MestreFisio V6.0 - Hospital Premium Ativo 🏥🧠"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -32,7 +32,7 @@ db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
 uso_coll = db['uso_usuarios']
 
-# --- MEMÓRIA CLÍNICA INTELIGENTE ---
+# --- MEMÓRIA CLÍNICA ---
 def montar_memoria_clinica(paciente):
     memoria = ""
 
@@ -48,6 +48,34 @@ def montar_memoria_clinica(paciente):
             memoria += f"- ({r['data']}) {r['info']}\n"
 
     return memoria.strip()
+
+# --- LINHA DO TEMPO ---
+def gerar_linha_do_tempo(paciente):
+    timeline = ""
+    if paciente.get("registros_clinicos"):
+        for r in paciente["registros_clinicos"]:
+            timeline += f"{r['data']} → {r['info']}\n"
+    return timeline if timeline else "Sem registros ainda."
+
+# --- RED FLAGS + SCORE ---
+def analisar_risco_clinico(texto):
+
+    palavras_redflag = [
+        "perda de força", "incontinência", "anestesia em sela",
+        "dor noturna intensa", "febre", "histórico de câncer",
+        "trauma recente", "déficit neurológico", "paralisia"
+    ]
+
+    score = 0
+    alertas = []
+    texto_lower = texto.lower()
+
+    for palavra in palavras_redflag:
+        if palavra in texto_lower:
+            score += 2
+            alertas.append(palavra)
+
+    return min(score, 10), alertas
 
 # --- CONTROLE DE USO ---
 LIMITE_GRATUITO = 5
@@ -70,8 +98,17 @@ def pode_usar(user_id):
 
 # --- PROMPT ---
 PROMPT_SISTEMA = """
-Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios (Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências). 
-Use linguagem científica de alto nível e formatação Markdown clara.
+Atue como um Fisioterapeuta PhD e especialista clínico hospitalar.
+
+Forneça análise em 15 tópicos obrigatórios:
+Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências.
+
+Inclua também:
+- Nível de gravidade (0–10)
+- Conduta recomendada
+- Necessidade de encaminhamento
+
+Use linguagem científica de alto nível.
 """
 
 # --- MENU ---
@@ -83,17 +120,13 @@ def menu_principal():
         types.InlineKeyboardButton("📝 Atualizar Prontuário", callback_data="atualizar_prontuario"),
         types.InlineKeyboardButton("➕ Adicionar Informação Clínica", callback_data="add_info"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
-        types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
+        types.InlineKeyboardButton("💎 Planos Pro", callback_data="planos")
     )
     return markup
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.send_message(
-        message.chat.id,
-        "🚀 **MestreFisio V5.0 Especialista**\nAgora com memória clínica inteligente.",
-        reply_markup=menu_principal()
-    )
+    bot.send_message(message.chat.id, "🏥 MestreFisio V6 Hospital Premium", reply_markup=menu_principal())
 
 # --- CALLBACK ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -101,37 +134,20 @@ def callback_query(call):
     bot.answer_callback_query(call.id)
 
     if call.data == "novo_paciente":
-        msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
+        msg = bot.send_message(call.message.chat.id, "Nome do paciente:")
         bot.register_next_step_handler(msg, obter_nome_paciente)
 
-    elif call.data == "duvida_tecnica":
-        msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
-        bot.register_next_step_handler(msg, processar_ia_direta)
-
-    elif call.data == "ver_historico":
+    elif call.data == "add_info":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-        if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
-        else:
-            txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
-            bot.send_message(call.message.chat.id, txt)
-
-    elif call.data == "atualizar_prontuario":
-        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-
-        if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
-            return
-
-        markup = types.InlineKeyboardMarkup(row_width=1)
-
+        markup = types.InlineKeyboardMarkup()
         for p in pacientes:
-            markup.add(types.InlineKeyboardButton(
-                f"{p['nome']}",
-                callback_data=f"editar_{p['nome']}"
-            ))
+            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"addinfo_{p['nome']}"))
+        bot.send_message(call.message.chat.id, "Selecione paciente:", reply_markup=markup)
 
-        bot.send_message(call.message.chat.id, "📝 Selecione o paciente:", reply_markup=markup)
+    elif call.data.startswith("addinfo_"):
+        nome = call.data.replace("addinfo_", "")
+        msg = bot.send_message(call.message.chat.id, "Nova info clínica:")
+        bot.register_next_step_handler(msg, adicionar_info_clinica, nome)
 
     elif call.data.startswith("editar_"):
         nome = call.data.replace("editar_", "")
@@ -141,61 +157,25 @@ def callback_query(call):
             "nome": nome
         })
 
-        resumo = paciente.get("evolucao", "Sem evolução registrada ainda.")
-        ultima = paciente.get("ultima_analise", "Sem análise prévia.")
+        score = paciente.get("score_risco", 0)
+        alertas = paciente.get("alertas", [])
 
-        texto = f"📂 **{nome}**\n\n🧠 Última análise:\n{ultima[:500]}...\n\n📈 Evolução:\n{resumo}"
+        texto = f"""📂 {nome}
 
-        msg = bot.send_message(call.message.chat.id, texto + "\n\n✍️ Envie nova evolução:")
+Score: {score}/10
+Alertas: {alertas}
+
+Última análise:
+{paciente.get("ultima_analise","")[:500]}
+"""
+
+        msg = bot.send_message(call.message.chat.id, texto + "\nNova evolução:")
         bot.register_next_step_handler(msg, salvar_evolucao, nome)
 
-    elif call.data == "add_info":
-
-        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-
-        if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
-            return
-
-        markup = types.InlineKeyboardMarkup(row_width=1)
-
-        for p in pacientes:
-            markup.add(types.InlineKeyboardButton(
-                f"{p['nome']}",
-                callback_data=f"addinfo_{p['nome']}"
-            ))
-
-        bot.send_message(call.message.chat.id, "➕ Selecione o paciente:", reply_markup=markup)
-
-    elif call.data.startswith("addinfo_"):
-        nome = call.data.replace("addinfo_", "")
-
-        msg = bot.send_message(
-            call.message.chat.id,
-            f"🧠 Envie a nova informação clínica para {nome}:"
-        )
-
-        bot.register_next_step_handler(msg, adicionar_info_clinica, nome)
-
-    elif call.data == "planos":
-        try:
-            bot.send_invoice(
-                chat_id=call.message.chat.id,
-                title="MestreFisio PhD Pro 💎",
-                description="Acesso ilimitado às análises.",
-                provider_token=TOKEN_PAYMENT,
-                currency="BRL",
-                prices=[types.LabeledPrice("Assinatura Pro", 5990)],
-                invoice_payload="pro_access",
-                start_parameter="pro_access"
-            )
-        except Exception as e:
-            bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
-
-# --- FLUXO PACIENTE ---
+# --- PACIENTE ---
 def obter_nome_paciente(message):
-    nome = message.text.upper().strip()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico:")
+    nome = message.text.upper()
+    msg = bot.send_message(message.chat.id, "Descreva o caso:")
     bot.register_next_step_handler(msg, processar_ia_paciente, nome)
 
 def processar_ia_paciente(message, nome):
@@ -212,68 +192,40 @@ def processar_ia_paciente(message, nome):
 
 Paciente: {nome}
 
-Histórico clínico:
+Histórico:
 {memoria}
 
 Nova informação:
 {message.text}
-
-Atualize o raciocínio considerando toda evolução.
 """
 
     chamar_gemini(message, prompt, nome)
 
-def processar_ia_direta(message):
-    prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
-    chamar_gemini(message, prompt)
-
-# --- EVOLUÇÃO ---
-def salvar_evolucao(message, nome):
-    nova_info = message.text
-
-    paciente = pacientes_coll.find_one({
-        "profissional_id": message.from_user.id,
-        "nome": nome
-    })
-
-    evolucao_antiga = paciente.get("evolucao", "")
-
-    nova_evolucao = evolucao_antiga + f"\n\n[{time.strftime('%d/%m/%Y')}]\n{nova_info}"
-
-    pacientes_coll.update_one(
-        {"profissional_id": message.from_user.id, "nome": nome},
-        {"$set": {"evolucao": nova_evolucao}},
-        upsert=True
-    )
-
-    bot.send_message(message.chat.id, "✅ Evolução salva!", reply_markup=menu_principal())
-
-# --- NOVA INFO CLÍNICA ---
+# --- SALVAR INFO ---
 def adicionar_info_clinica(message, nome):
-
     pacientes_coll.update_one(
         {"profissional_id": message.from_user.id, "nome": nome},
-        {
-            "$push": {
-                "registros_clinicos": {
-                    "data": time.strftime("%d/%m/%Y"),
-                    "info": message.text
-                }
-            }
-        },
+        {"$push": {"registros_clinicos": {"data": time.strftime("%d/%m/%Y"), "info": message.text}}},
         upsert=True
     )
+    bot.send_message(message.chat.id, "Info salva", reply_markup=menu_principal())
 
-    bot.send_message(message.chat.id, "✅ Informação adicionada!", reply_markup=menu_principal())
+def salvar_evolucao(message, nome):
+    pacientes_coll.update_one(
+        {"profissional_id": message.from_user.id, "nome": nome},
+        {"$set": {"evolucao": message.text}},
+        upsert=True
+    )
+    bot.send_message(message.chat.id, "Evolução salva", reply_markup=menu_principal())
 
 # --- IA ---
 def chamar_gemini(message, prompt, nome_paciente=None):
 
     if not pode_usar(message.from_user.id):
-        bot.send_message(message.chat.id, "🚫 Limite atingido.")
+        bot.send_message(message.chat.id, "Limite atingido")
         return
 
-    aguarde = bot.send_message(message.chat.id, "🧠 Processando...")
+    aguarde = bot.send_message(message.chat.id, "Processando...")
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
 
@@ -284,28 +236,42 @@ def chamar_gemini(message, prompt, nome_paciente=None):
         if 'candidates' in res_data:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
 
+            score, alertas = analisar_risco_clinico(prompt)
+
             if nome_paciente:
                 pacientes_coll.update_one(
                     {"profissional_id": message.from_user.id, "nome": nome_paciente},
-                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
+                    {
+                        "$set": {
+                            "ultima_analise": analise,
+                            "data": time.strftime("%d/%m/%Y"),
+                            "score_risco": score,
+                            "alertas": alertas
+                        }
+                    },
                     upsert=True
                 )
+
+                if score >= 6:
+                    try:
+                        bot.send_message(ADMIN_ID, f"🚨 ALERTA {nome_paciente} Score {score}")
+                    except:
+                        pass
 
             bot.delete_message(message.chat.id, aguarde.message_id)
 
             for p in [analise[i:i+1500] for i in range(0, len(analise), 1500)]:
                 bot.send_message(message.chat.id, p)
-                time.sleep(1)
 
-            bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal())
+            bot.send_message(message.chat.id, "Finalizado", reply_markup=menu_principal())
 
     except Exception as e:
         print(e)
-        bot.send_message(message.chat.id, "❌ Erro na IA.")
+        bot.send_message(message.chat.id, "Erro IA")
 
-# --- EXECUÇÃO ---
+# --- EXEC ---
 if __name__ == "__main__":
     Thread(target=run).start()
     bot.remove_webhook()
     time.sleep(2)
-    bot.infinity_polling(timeout=120, long_polling_timeout=60)
+    bot.infinity_polling()

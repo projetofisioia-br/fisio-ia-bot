@@ -29,8 +29,11 @@ MODELO = "gemini-2.5-flash"
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 
-# ADMIN seguro (não quebra se vazio)
-ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
+# --- ADMIN ---
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+
+def is_admin(user_id):
+    return user_id == ADMIN_ID
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
@@ -38,7 +41,27 @@ bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 client = MongoClient(MONGO_URI)
 db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
-usuarios_coll = db['usuarios']
+
+# --- CONTROLE DE USO ---
+uso_coll = db['uso_usuarios']
+
+LIMITE_GRATUITO = 5
+
+def pode_usar(user_id):
+    if is_admin(user_id):
+        return True  # ADMIN ILIMITADO
+
+    user = uso_coll.find_one({"user_id": user_id})
+
+    if not user:
+        uso_coll.insert_one({"user_id": user_id, "uso": 1})
+        return True
+
+    if user["uso"] >= LIMITE_GRATUITO:
+        return False
+
+    uso_coll.update_one({"user_id": user_id}, {"$inc": {"uso": 1}})
+    return True
 
 # --- PDF ---
 def gerar_pdf_paciente(chat_id, paciente):

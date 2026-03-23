@@ -17,7 +17,7 @@ API_KEY_IA = os.environ.get("API_KEY_IA", "").strip()
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 
-MODELO = "gemini-1.5-flash"
+MODELO = "gemini-2.5-flash"
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 

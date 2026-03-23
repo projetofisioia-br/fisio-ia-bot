@@ -66,6 +66,7 @@ def menu_principal():
     markup.add(
         types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente"),
         types.InlineKeyboardButton("📂 Histórico de Pacientes", callback_data="ver_historico"),
+        types.InlineKeyboardButton("📝 Atualizar Prontuário", callback_data="atualizar_prontuario"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
     )
@@ -100,6 +101,39 @@ def callback_query(call):
             txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
             bot.send_message(call.message.chat.id, txt)
 
+    elif call.data == "atualizar_prontuario":
+        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+
+        if not pacientes:
+            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(
+                f"{p['nome']}",
+                callback_data=f"editar_{p['nome']}"
+            ))
+
+        bot.send_message(call.message.chat.id, "📝 Selecione o paciente:", reply_markup=markup)
+
+    elif call.data.startswith("editar_"):
+        nome = call.data.replace("editar_", "")
+
+        paciente = pacientes_coll.find_one({
+            "profissional_id": call.from_user.id,
+            "nome": nome
+        })
+
+        resumo = paciente.get("evolucao", "Sem evolução registrada ainda.")
+        ultima = paciente.get("ultima_analise", "Sem análise prévia.")
+
+        texto = f"📂 **{nome}**\n\n🧠 Última análise:\n{ultima[:500]}...\n\n📈 Evolução:\n{resumo}"
+
+        msg = bot.send_message(call.message.chat.id, texto + "\n\n✍️ Envie nova evolução:")
+        bot.register_next_step_handler(msg, salvar_evolucao, nome)
+
     elif call.data == "planos":
         try:
             bot.send_invoice(
@@ -128,6 +162,27 @@ def processar_ia_paciente(message, nome):
 def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
     chamar_gemini(message, prompt)
+
+# --- NOVA FUNÇÃO ---
+def salvar_evolucao(message, nome):
+    nova_info = message.text
+
+    paciente = pacientes_coll.find_one({
+        "profissional_id": message.from_user.id,
+        "nome": nome
+    })
+
+    evolucao_antiga = paciente.get("evolucao", "")
+
+    nova_evolucao = evolucao_antiga + f"\n\n[{time.strftime('%d/%m/%Y')}]\n{nova_info}"
+
+    pacientes_coll.update_one(
+        {"profissional_id": message.from_user.id, "nome": nome},
+        {"$set": {"evolucao": nova_evolucao}},
+        upsert=True
+    )
+
+    bot.send_message(message.chat.id, "✅ Evolução salva com sucesso!", reply_markup=menu_principal())
 
 # --- IA ORIGINAL (INTACTA) ---
 def chamar_gemini(message, prompt, nome_paciente=None):

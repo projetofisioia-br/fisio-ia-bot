@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V4.7 - Estabilidade de Fluxo PhD Ativa"
+def home(): return "MestreFisio V5.0 - Sistema Inteligente PRO Ativo"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -24,8 +24,7 @@ bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 client = MongoClient(MONGO_URI)
 db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
-
-bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
+usuarios_coll = db['usuarios']
 
 # --- PROMPT ---
 PROMPT_SISTEMA = """
@@ -38,6 +37,7 @@ def menu_principal():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente"),
+        types.InlineKeyboardButton("🧠 Atualizar Paciente", callback_data="atualizar_paciente"),
         types.InlineKeyboardButton("📂 Histórico de Pacientes", callback_data="ver_historico"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
@@ -48,7 +48,7 @@ def menu_principal():
 def send_welcome(message):
     bot.send_message(
         message.chat.id,
-        "🚀 **MestreFisio V4.7 Especialista**\nSistema de alta performance para análises profundas.",
+        "🚀 **MestreFisio V5.0 Especialista**\nSistema clínico com memória evolutiva.",
         reply_markup=menu_principal()
     )
 
@@ -61,6 +61,23 @@ def callback_query(call):
         msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
         bot.register_next_step_handler(msg, obter_nome_paciente)
 
+    elif call.data == "atualizar_paciente":
+        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+        if not pacientes:
+            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+            return
+
+        markup = types.InlineKeyboardMarkup()
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"paciente_{p['nome']}"))
+
+        bot.send_message(call.message.chat.id, "Selecione o paciente:", reply_markup=markup)
+
+    elif call.data.startswith("paciente_"):
+        nome = call.data.replace("paciente_", "")
+        msg = bot.send_message(call.message.chat.id, f"✍️ Atualize o quadro clínico de {nome}:")
+        bot.register_next_step_handler(msg, processar_ia_paciente, nome)
+
     elif call.data == "duvida_tecnica":
         msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
         bot.register_next_step_handler(msg, processar_ia_direta)
@@ -70,8 +87,12 @@ def callback_query(call):
         if not pacientes:
             bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
         else:
-            txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
-            bot.send_message(call.message.chat.id, txt)
+            for p in pacientes:
+                evolucoes = p.get("evolucoes", [])
+                bot.send_message(
+                    call.message.chat.id,
+                    f"📂 **{p['nome']}**\nEvoluções: {len(evolucoes)}"
+                )
 
     elif call.data == "planos":
         try:
@@ -88,10 +109,31 @@ def callback_query(call):
         except Exception as e:
             bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
 
+# --- PAGAMENTO ---
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def checkout(pre_checkout_query):
+    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+@bot.message_handler(content_types=['successful_payment'])
+def pagamento_confirmado(message):
+    user_id = message.from_user.id
+
+    usuarios_coll.update_one(
+        {"user_id": user_id},
+        {"$set": {"plano": "PRO", "consultas": 0}},
+        upsert=True
+    )
+
+    bot.send_message(
+        message.chat.id,
+        "💎 Pagamento aprovado! PRO liberado 🚀",
+        reply_markup=menu_principal()
+    )
+
 # --- FLUXO PACIENTE ---
 def obter_nome_paciente(message):
     nome = message.text.upper().strip()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico para análise:")
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
     bot.register_next_step_handler(msg, processar_ia_paciente, nome)
 
 def processar_ia_paciente(message, nome):
@@ -102,12 +144,17 @@ def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
     chamar_gemini(message, prompt)
 
-# --- IA ORIGINAL (INTACTA) ---
+# --- IA ---
 def chamar_gemini(message, prompt, nome_paciente=None):
-    aguarde = bot.send_message(
-        message.chat.id,
-        "🧠 **Construindo raciocínio clínico...**\nIsso pode levar até 90s devido à complexidade da estrutura de 15 tópicos."
-    )
+    user_id = message.from_user.id
+
+    user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
+
+    if user_data.get("plano") != "PRO" and user_data.get("consultas", 0) >= 3:
+        bot.send_message(message.chat.id, "⚠️ Limite FREE atingido. Assine o PRO.", reply_markup=menu_principal())
+        return
+
+    aguarde = bot.send_message(message.chat.id, "🧠 Construindo raciocínio clínico...")
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
 
@@ -120,10 +167,25 @@ def chamar_gemini(message, prompt, nome_paciente=None):
 
             if nome_paciente:
                 pacientes_coll.update_one(
-                    {"profissional_id": message.from_user.id, "nome": nome_paciente},
-                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
+                    {"profissional_id": user_id, "nome": nome_paciente},
+                    {
+                        "$push": {
+                            "evolucoes": {
+                                "data": time.strftime("%d/%m/%Y %H:%M"),
+                                "relato": message.text,
+                                "analise": analise
+                            }
+                        },
+                        "$set": {"ultima_atualizacao": time.strftime("%d/%m/%Y")}
+                    },
                     upsert=True
                 )
+
+            usuarios_coll.update_one(
+                {"user_id": user_id},
+                {"$inc": {"consultas": 1}},
+                upsert=True
+            )
 
             bot.delete_message(message.chat.id, aguarde.message_id)
 
@@ -136,14 +198,14 @@ def chamar_gemini(message, prompt, nome_paciente=None):
                 except:
                     bot.send_message(message.chat.id, p)
 
-            bot.send_message(message.chat.id, "✅ **Análise Finalizada com Sucesso.**", reply_markup=menu_principal())
+            bot.send_message(message.chat.id, "✅ Análise Finalizada", reply_markup=menu_principal())
 
         else:
-            bot.send_message(message.chat.id, "⚠️ A IA não conseguiu estruturar todos os tópicos.")
+            bot.send_message(message.chat.id, "⚠️ IA não respondeu corretamente.")
 
     except Exception as e:
         print(f"Erro: {e}")
-        bot.send_message(message.chat.id, "❌ Falha na conexão técnica.")
+        bot.send_message(message.chat.id, "❌ Falha na conexão.")
 
 # --- EXECUÇÃO ---
 if __name__ == "__main__":

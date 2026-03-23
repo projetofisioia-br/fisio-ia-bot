@@ -9,7 +9,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V7.0 - SaaS Clínico Ativo"
+def home(): return "MestreFisio V7.1 - Estável"
 
 @app.route('/pacientes/<user_id>')
 def listar_pacientes(user_id):
@@ -19,7 +19,8 @@ def listar_pacientes(user_id):
         for p in pacientes
     ]}
 
-def run(): app.run(host='0.0.0.0', port=10000)
+def run():
+    app.run(host='0.0.0.0', port=10000)
 
 # --- CONFIG ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM", "").strip()
@@ -27,7 +28,9 @@ API_KEY_IA = os.environ.get("API_KEY_IA", "").strip()
 MODELO = "gemini-2.5-flash"
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
-ADMIN_IDS = list(map(int, os.environ.get("ADMIN_IDS", "").split(",")))
+
+# ADMIN seguro (não quebra se vazio)
+ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()]
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
@@ -92,10 +95,8 @@ def obter_metricas():
 # --- USUÁRIOS PESADOS ---
 def usuarios_pesados():
     users = usuarios_coll.find({"consultas": {"$gt": 50}})
-    texto = "🚨 Alto uso:\n\n"
-    for u in users:
-        texto += f"{u['user_id']} → {u.get('consultas',0)} consultas\n"
-    return texto if texto.strip() != "" else "OK"
+    lista = [f"{u['user_id']} → {u.get('consultas',0)}" for u in users]
+    return "🚨 Alto uso:\n\n" + "\n".join(lista) if lista else "Nenhum abuso detectado."
 
 # --- MENU ---
 def menu_principal():
@@ -114,14 +115,17 @@ def menu_principal():
 # --- START ---
 @bot.message_handler(commands=['start'])
 def start(message):
-
     if not usuarios_coll.find_one({"user_id": message.from_user.id}):
-        usuarios_coll.insert_one({"user_id": message.from_user.id, "plano": "FREE", "consultas": 0})
+        usuarios_coll.insert_one({
+            "user_id": message.from_user.id,
+            "plano": "FREE",
+            "consultas": 0
+        })
 
         for admin in ADMIN_IDS:
             bot.send_message(admin, f"🚀 Novo usuário: {message.from_user.id}")
 
-    bot.send_message(message.chat.id, "MestreFisio V7", reply_markup=menu_principal())
+    bot.send_message(message.chat.id, "MestreFisio V7.1", reply_markup=menu_principal())
 
 # --- CALLBACK ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -195,7 +199,6 @@ def callback(call):
             types.InlineKeyboardButton("🚨 Uso alto", callback_data="adm_u"),
             types.InlineKeyboardButton("👥 Usuários", callback_data="adm_l")
         )
-
         bot.send_message(call.message.chat.id, "Admin:", reply_markup=markup)
 
     elif call.data == "adm_m":
@@ -259,7 +262,11 @@ def processar(message, nome=None):
             upsert=True
         )
 
-    usuarios_coll.update_one({"user_id": user_id}, {"$inc": {"consultas": 1}}, upsert=True)
+    usuarios_coll.update_one(
+        {"user_id": user_id},
+        {"$inc": {"consultas": 1}},
+        upsert=True
+    )
 
     # ALERTA ADMIN
     if user.get("consultas", 0) > 50:
@@ -276,4 +283,4 @@ def obter_nome(message):
 # --- EXEC ---
 if __name__ == "__main__":
     Thread(target=run).start()
-    bot.infinity_polling()
+    bot.infinity_polling(skip_pending=True)

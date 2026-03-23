@@ -52,6 +52,27 @@ def montar_memoria_clinica(paciente):
 # --- CONTROLE DE USO ---
 LIMITE_GRATUITO = 5
 
+# 🔥 NOVO: registrar usuário + alerta admin
+def registrar_usuario_se_novo(user_id):
+
+    user = uso_coll.find_one({"user_id": user_id})
+
+    if not user:
+        uso_coll.insert_one({
+            "user_id": user_id,
+            "uso": 0,
+            "criado_em": time.strftime("%d/%m/%Y %H:%M")
+        })
+
+        if ADMIN_ID:
+            try:
+                bot.send_message(
+                    ADMIN_ID,
+                    f"🚀 Novo usuário:\nID: {user_id}"
+                )
+            except:
+                pass
+
 def pode_usar(user_id):
     if is_admin(user_id):
         return True
@@ -65,7 +86,23 @@ def pode_usar(user_id):
     if user["uso"] >= LIMITE_GRATUITO:
         return False
 
-    uso_coll.update_one({"user_id": user_id}, {"$inc": {"uso": 1}})
+    novo_uso = user["uso"] + 1
+
+    uso_coll.update_one(
+        {"user_id": user_id},
+        {"$set": {"uso": novo_uso}}
+    )
+
+    # 🔥 ALERTA ADMIN
+    if novo_uso >= LIMITE_GRATUITO:
+        try:
+            bot.send_message(
+                ADMIN_ID,
+                f"⚠️ Usuário atingiu limite:\nID: {user_id}\nUso: {novo_uso}"
+            )
+        except:
+            pass
+
     return True
 
 # --- PROMPT ---
@@ -85,6 +122,12 @@ def menu_principal():
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
     )
+
+    # 🔥 BOTÃO ADMIN
+    markup.add(
+        types.InlineKeyboardButton("📊 Métricas (Admin)", callback_data="metricas_admin")
+    )
+
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -115,6 +158,24 @@ def callback_query(call):
         else:
             txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
             bot.send_message(call.message.chat.id, txt)
+
+    elif call.data == "metricas_admin":
+
+        if not is_admin(call.from_user.id):
+            bot.send_message(call.message.chat.id, "Acesso restrito.")
+            return
+
+        total_usuarios = uso_coll.count_documents({})
+        total_pacientes = pacientes_coll.count_documents({})
+        total_analises = sum([u.get("uso", 0) for u in uso_coll.find()])
+
+        bot.send_message(
+            call.message.chat.id,
+            f"📊 MÉTRICAS\n\n"
+            f"👥 Usuários: {total_usuarios}\n"
+            f"🧾 Pacientes: {total_pacientes}\n"
+            f"🧠 Análises: {total_analises}"
+        )
 
     elif call.data == "atualizar_prontuario":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
@@ -227,51 +288,16 @@ def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
     chamar_gemini(message, prompt)
 
-# --- EVOLUÇÃO ---
-def salvar_evolucao(message, nome):
-    nova_info = message.text
-
-    paciente = pacientes_coll.find_one({
-        "profissional_id": message.from_user.id,
-        "nome": nome
-    })
-
-    evolucao_antiga = paciente.get("evolucao", "")
-
-    nova_evolucao = evolucao_antiga + f"\n\n[{time.strftime('%d/%m/%Y')}]\n{nova_info}"
-
-    pacientes_coll.update_one(
-        {"profissional_id": message.from_user.id, "nome": nome},
-        {"$set": {"evolucao": nova_evolucao}},
-        upsert=True
-    )
-
-    bot.send_message(message.chat.id, "✅ Evolução salva!", reply_markup=menu_principal())
-
-# --- NOVA INFO CLÍNICA ---
-def adicionar_info_clinica(message, nome):
-
-    pacientes_coll.update_one(
-        {"profissional_id": message.from_user.id, "nome": nome},
-        {
-            "$push": {
-                "registros_clinicos": {
-                    "data": time.strftime("%d/%m/%Y"),
-                    "info": message.text
-                }
-            }
-        },
-        upsert=True
-    )
-
-    bot.send_message(message.chat.id, "✅ Informação adicionada!", reply_markup=menu_principal())
-
 # --- IA ---
 def chamar_gemini(message, prompt, nome_paciente=None):
 
-    if not pode_usar(message.from_user.id):
-        bot.send_message(message.chat.id, "🚫 Limite atingido.")
-        return
+    # 🔥 ADMIN LIBERADO + REGISTRO USUÁRIO
+    if not is_admin(message.from_user.id):
+        registrar_usuario_se_novo(message.from_user.id)
+
+        if not pode_usar(message.from_user.id):
+            bot.send_message(message.chat.id, "🚫 Limite atingido.")
+            return
 
     aguarde = bot.send_message(message.chat.id, "🧠 Processando...")
 
@@ -281,23 +307,28 @@ def chamar_gemini(message, prompt, nome_paciente=None):
         response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=400)
         res_data = response.json()
 
-        if 'candidates' in res_data:
+        try:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
-
-            if nome_paciente:
-                pacientes_coll.update_one(
-                    {"profissional_id": message.from_user.id, "nome": nome_paciente},
-                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
-                    upsert=True
-                )
-
+        except:
             bot.delete_message(message.chat.id, aguarde.message_id)
+            bot.send_message(message.chat.id, "⚠️ Erro ao interpretar resposta da IA.")
+            print(res_data)
+            return
 
-            for p in [analise[i:i+1500] for i in range(0, len(analise), 1500)]:
-                bot.send_message(message.chat.id, p)
-                time.sleep(1)
+        if nome_paciente:
+            pacientes_coll.update_one(
+                {"profissional_id": message.from_user.id, "nome": nome_paciente},
+                {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
+                upsert=True
+            )
 
-            bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal())
+        bot.delete_message(message.chat.id, aguarde.message_id)
+
+        for p in [analise[i:i+1500] for i in range(0, len(analise), 1500)]:
+            bot.send_message(message.chat.id, p)
+            time.sleep(1)
+
+        bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal())
 
     except Exception as e:
         print(e)

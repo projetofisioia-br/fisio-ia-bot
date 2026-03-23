@@ -3,20 +3,31 @@ from telebot import types
 from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
 
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V5.0 - Sistema Inteligente PRO Ativo"
+def home(): return "MestreFisio V7.0 - SaaS Clínico Ativo"
+
+@app.route('/pacientes/<user_id>')
+def listar_pacientes(user_id):
+    pacientes = list(pacientes_coll.find({"profissional_id": int(user_id)}))
+    return {"pacientes": [
+        {"nome": p["nome"], "evolucoes": len(p.get("evolucoes", []))}
+        for p in pacientes
+    ]}
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
-# --- CONFIGURAÇÕES ---
+# --- CONFIG ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM", "").strip()
 API_KEY_IA = os.environ.get("API_KEY_IA", "").strip()
 MODELO = "gemini-2.5-flash"
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
+ADMIN_IDS = list(map(int, os.environ.get("ADMIN_IDS", "").split(",")))
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
@@ -26,190 +37,243 @@ db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
 usuarios_coll = db['usuarios']
 
-# --- PROMPT ---
-PROMPT_SISTEMA = """
-Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios (Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências). 
-Use linguagem científica de alto nível e formatação Markdown clara.
+# --- PDF ---
+def gerar_pdf_paciente(chat_id, paciente):
+    nome_arquivo = f"/mnt/data/{paciente['nome']}.pdf"
+    doc = SimpleDocTemplate(nome_arquivo)
+    styles = getSampleStyleSheet()
+    conteudo = []
+
+    conteudo.append(Paragraph(f"Prontuário - {paciente['nome']}", styles['Title']))
+    conteudo.append(Spacer(1, 12))
+
+    for evo in paciente.get("evolucoes", []):
+        conteudo.append(Paragraph(
+            f"{evo['data']}<br/>{evo['relato']}<br/>{evo['analise']}",
+            styles['Normal']
+        ))
+        conteudo.append(Spacer(1, 10))
+
+    doc.build(conteudo)
+
+    with open(nome_arquivo, "rb") as f:
+        bot.send_document(chat_id, f)
+
+# --- RESUMO ---
+def gerar_resumo(paciente):
+    textos = "\n".join([e["relato"] for e in paciente.get("evolucoes", [])])
+    if not textos:
+        return "Sem dados."
+
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}",
+        json={"contents": [{"parts": [{"text": f"Resuma clinicamente:\n{textos}"}]}]}
+    )
+
+    try:
+        return response.json()['candidates'][0]['content']['parts'][0]['text']
+    except:
+        return "Erro resumo"
+
+# --- MÉTRICAS ---
+def obter_metricas():
+    total_usuarios = usuarios_coll.count_documents({})
+    total_pacientes = pacientes_coll.count_documents({})
+    pro_users = usuarios_coll.count_documents({"plano": "PRO"})
+
+    return f"""
+📊 MÉTRICAS
+
+👥 Usuários: {total_usuarios}
+💎 PRO: {pro_users}
+🧠 Pacientes: {total_pacientes}
 """
+
+# --- USUÁRIOS PESADOS ---
+def usuarios_pesados():
+    users = usuarios_coll.find({"consultas": {"$gt": 50}})
+    texto = "🚨 Alto uso:\n\n"
+    for u in users:
+        texto += f"{u['user_id']} → {u.get('consultas',0)} consultas\n"
+    return texto if texto.strip() != "" else "OK"
 
 # --- MENU ---
 def menu_principal():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente"),
-        types.InlineKeyboardButton("🧠 Atualizar Paciente", callback_data="atualizar_paciente"),
-        types.InlineKeyboardButton("📂 Histórico de Pacientes", callback_data="ver_historico"),
-        types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
-        types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
+        types.InlineKeyboardButton("🧠 Atualizar", callback_data="atualizar_paciente"),
+        types.InlineKeyboardButton("📂 Histórico", callback_data="ver_historico"),
+        types.InlineKeyboardButton("📄 PDF", callback_data="gerar_pdf"),
+        types.InlineKeyboardButton("📊 Resumo", callback_data="resumo"),
+        types.InlineKeyboardButton("💎 PRO", callback_data="planos"),
+        types.InlineKeyboardButton("⚙️ Admin", callback_data="admin")
     )
     return markup
 
+# --- START ---
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.send_message(
-        message.chat.id,
-        "🚀 **MestreFisio V5.0 Especialista**\nSistema clínico com memória evolutiva.",
-        reply_markup=menu_principal()
-    )
+def start(message):
+
+    if not usuarios_coll.find_one({"user_id": message.from_user.id}):
+        usuarios_coll.insert_one({"user_id": message.from_user.id, "plano": "FREE", "consultas": 0})
+
+        for admin in ADMIN_IDS:
+            bot.send_message(admin, f"🚀 Novo usuário: {message.from_user.id}")
+
+    bot.send_message(message.chat.id, "MestreFisio V7", reply_markup=menu_principal())
 
 # --- CALLBACK ---
 @bot.callback_query_handler(func=lambda call: True)
-def callback_query(call):
+def callback(call):
     bot.answer_callback_query(call.id)
 
     if call.data == "novo_paciente":
-        msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
-        bot.register_next_step_handler(msg, obter_nome_paciente)
+        msg = bot.send_message(call.message.chat.id, "Nome:")
+        bot.register_next_step_handler(msg, obter_nome)
 
     elif call.data == "atualizar_paciente":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-        if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+        markup = types.InlineKeyboardMarkup()
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"pac_{p['nome']}"))
+        bot.send_message(call.message.chat.id, "Selecione:", reply_markup=markup)
+
+    elif call.data.startswith("pac_"):
+        nome = call.data.replace("pac_", "")
+        msg = bot.send_message(call.message.chat.id, f"Atualizar {nome}:")
+        bot.register_next_step_handler(msg, lambda m: processar(m, nome))
+
+    elif call.data == "ver_historico":
+        pacientes = pacientes_coll.find({"profissional_id": call.from_user.id})
+        for p in pacientes:
+            bot.send_message(call.message.chat.id, f"{p['nome']} ({len(p.get('evolucoes', []))})")
+
+    elif call.data == "gerar_pdf":
+        pacientes = pacientes_coll.find({"profissional_id": call.from_user.id})
+        markup = types.InlineKeyboardMarkup()
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"pdf_{p['nome']}"))
+        bot.send_message(call.message.chat.id, "Selecione:", reply_markup=markup)
+
+    elif call.data.startswith("pdf_"):
+        nome = call.data.replace("pdf_", "")
+        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
+        gerar_pdf_paciente(call.message.chat.id, paciente)
+
+    elif call.data == "resumo":
+        pacientes = pacientes_coll.find({"profissional_id": call.from_user.id})
+        markup = types.InlineKeyboardMarkup()
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"res_{p['nome']}"))
+        bot.send_message(call.message.chat.id, "Selecione:", reply_markup=markup)
+
+    elif call.data.startswith("res_"):
+        nome = call.data.replace("res_", "")
+        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
+        bot.send_message(call.message.chat.id, gerar_resumo(paciente))
+
+    elif call.data == "planos":
+        bot.send_invoice(
+            chat_id=call.message.chat.id,
+            title="PRO",
+            description="Acesso ilimitado",
+            provider_token=TOKEN_PAYMENT,
+            currency="BRL",
+            prices=[types.LabeledPrice("Plano PRO", 5990)],
+            invoice_payload="pro"
+        )
+
+    # --- ADMIN ---
+    elif call.data == "admin":
+        if call.from_user.id not in ADMIN_IDS:
             return
 
         markup = types.InlineKeyboardMarkup()
-        for p in pacientes:
-            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"paciente_{p['nome']}"))
+        markup.add(
+            types.InlineKeyboardButton("📊 Métricas", callback_data="adm_m"),
+            types.InlineKeyboardButton("🚨 Uso alto", callback_data="adm_u"),
+            types.InlineKeyboardButton("👥 Usuários", callback_data="adm_l")
+        )
 
-        bot.send_message(call.message.chat.id, "Selecione o paciente:", reply_markup=markup)
+        bot.send_message(call.message.chat.id, "Admin:", reply_markup=markup)
 
-    elif call.data.startswith("paciente_"):
-        nome = call.data.replace("paciente_", "")
-        msg = bot.send_message(call.message.chat.id, f"✍️ Atualize o quadro clínico de {nome}:")
-        bot.register_next_step_handler(msg, processar_ia_paciente, nome)
+    elif call.data == "adm_m":
+        if call.from_user.id in ADMIN_IDS:
+            bot.send_message(call.message.chat.id, obter_metricas())
 
-    elif call.data == "duvida_tecnica":
-        msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
-        bot.register_next_step_handler(msg, processar_ia_direta)
+    elif call.data == "adm_u":
+        if call.from_user.id in ADMIN_IDS:
+            bot.send_message(call.message.chat.id, usuarios_pesados())
 
-    elif call.data == "ver_historico":
-        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-        if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
-        else:
-            for p in pacientes:
-                evolucoes = p.get("evolucoes", [])
-                bot.send_message(
-                    call.message.chat.id,
-                    f"📂 **{p['nome']}**\nEvoluções: {len(evolucoes)}"
-                )
-
-    elif call.data == "planos":
-        try:
-            bot.send_invoice(
-                chat_id=call.message.chat.id,
-                title="MestreFisio PhD Pro 💎",
-                description="Acesso ilimitado às análises.",
-                provider_token=TOKEN_PAYMENT,
-                currency="BRL",
-                prices=[types.LabeledPrice("Assinatura Pro", 5990)],
-                invoice_payload="pro_access",
-                start_parameter="pro_access"
-            )
-        except Exception as e:
-            bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
+    elif call.data == "adm_l":
+        if call.from_user.id in ADMIN_IDS:
+            users = usuarios_coll.find().limit(20)
+            texto = "\n".join([f"{u['user_id']} | {u.get('plano','FREE')}" for u in users])
+            bot.send_message(call.message.chat.id, texto)
 
 # --- PAGAMENTO ---
-@bot.pre_checkout_query_handler(func=lambda query: True)
-def checkout(pre_checkout_query):
-    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+@bot.pre_checkout_query_handler(func=lambda q: True)
+def checkout(q):
+    bot.answer_pre_checkout_query(q.id, ok=True)
 
 @bot.message_handler(content_types=['successful_payment'])
-def pagamento_confirmado(message):
-    user_id = message.from_user.id
-
+def pagamento(message):
     usuarios_coll.update_one(
-        {"user_id": user_id},
+        {"user_id": message.from_user.id},
         {"$set": {"plano": "PRO", "consultas": 0}},
         upsert=True
     )
-
-    bot.send_message(
-        message.chat.id,
-        "💎 Pagamento aprovado! PRO liberado 🚀",
-        reply_markup=menu_principal()
-    )
-
-# --- FLUXO PACIENTE ---
-def obter_nome_paciente(message):
-    nome = message.text.upper().strip()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
-    bot.register_next_step_handler(msg, processar_ia_paciente, nome)
-
-def processar_ia_paciente(message, nome):
-    prompt = f"{PROMPT_SISTEMA}\n\nAnalise detalhadamente o caso do paciente {nome}: {message.text}"
-    chamar_gemini(message, prompt, nome)
-
-def processar_ia_direta(message):
-    prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
-    chamar_gemini(message, prompt)
+    bot.send_message(message.chat.id, "💎 PRO ativo")
 
 # --- IA ---
-def chamar_gemini(message, prompt, nome_paciente=None):
+def processar(message, nome=None):
     user_id = message.from_user.id
+    user = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
 
-    user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
+    if user_id not in ADMIN_IDS:
+        if user["plano"] != "PRO" and user["consultas"] >= 3:
+            bot.send_message(message.chat.id, "Limite FREE atingido.")
+            return
 
-    if user_data.get("plano") != "PRO" and user_data.get("consultas", 0) >= 3:
-        bot.send_message(message.chat.id, "⚠️ Limite FREE atingido. Assine o PRO.", reply_markup=menu_principal())
-        return
+    bot.send_message(message.chat.id, "Processando...")
 
-    aguarde = bot.send_message(message.chat.id, "🧠 Construindo raciocínio clínico...")
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
+    response = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}",
+        json={"contents": [{"parts": [{"text": message.text}]}]}
+    )
 
     try:
-        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=400)
-        res_data = response.json()
+        resposta = response.json()['candidates'][0]['content']['parts'][0]['text']
+    except:
+        resposta = "Erro IA"
 
-        if 'candidates' in res_data:
-            analise = res_data['candidates'][0]['content']['parts'][0]['text']
+    if nome:
+        pacientes_coll.update_one(
+            {"profissional_id": user_id, "nome": nome},
+            {"$push": {"evolucoes": {
+                "data": time.strftime("%d/%m/%Y"),
+                "relato": message.text,
+                "analise": resposta
+            }}},
+            upsert=True
+        )
 
-            if nome_paciente:
-                pacientes_coll.update_one(
-                    {"profissional_id": user_id, "nome": nome_paciente},
-                    {
-                        "$push": {
-                            "evolucoes": {
-                                "data": time.strftime("%d/%m/%Y %H:%M"),
-                                "relato": message.text,
-                                "analise": analise
-                            }
-                        },
-                        "$set": {"ultima_atualizacao": time.strftime("%d/%m/%Y")}
-                    },
-                    upsert=True
-                )
+    usuarios_coll.update_one({"user_id": user_id}, {"$inc": {"consultas": 1}}, upsert=True)
 
-            usuarios_coll.update_one(
-                {"user_id": user_id},
-                {"$inc": {"consultas": 1}},
-                upsert=True
-            )
+    # ALERTA ADMIN
+    if user.get("consultas", 0) > 50:
+        for admin in ADMIN_IDS:
+            bot.send_message(admin, f"🚨 Usuário {user_id} alto uso")
 
-            bot.delete_message(message.chat.id, aguarde.message_id)
+    bot.send_message(message.chat.id, resposta)
 
-            partes = [analise[i:i+1500] for i in range(0, len(analise), 1500)]
+def obter_nome(message):
+    nome = message.text.upper()
+    msg = bot.send_message(message.chat.id, f"{nome} - descreva:")
+    bot.register_next_step_handler(msg, lambda m: processar(m, nome))
 
-            for p in partes:
-                try:
-                    bot.send_message(message.chat.id, p, parse_mode="Markdown")
-                    time.sleep(1.2)
-                except:
-                    bot.send_message(message.chat.id, p)
-
-            bot.send_message(message.chat.id, "✅ Análise Finalizada", reply_markup=menu_principal())
-
-        else:
-            bot.send_message(message.chat.id, "⚠️ IA não respondeu corretamente.")
-
-    except Exception as e:
-        print(f"Erro: {e}")
-        bot.send_message(message.chat.id, "❌ Falha na conexão.")
-
-# --- EXECUÇÃO ---
+# --- EXEC ---
 if __name__ == "__main__":
     Thread(target=run).start()
-    bot.remove_webhook()
-    time.sleep(2)
-    bot.infinity_polling(timeout=120, long_polling_timeout=60)
+    bot.infinity_polling()

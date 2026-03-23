@@ -288,6 +288,99 @@ def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
     chamar_gemini(message, prompt)
 
+# --- ATUALIZAÇÃO DE PRONTUÁRIO COM IA ---
+def salvar_evolucao(message, nome):
+
+    nova_info = message.text
+
+    paciente = pacientes_coll.find_one({
+        "profissional_id": message.from_user.id,
+        "nome": nome
+    }) or {}
+
+    evolucao_antiga = paciente.get("evolucao", "")
+
+    nova_evolucao = evolucao_antiga + f"\n\n[{time.strftime('%d/%m/%Y')}]\n{nova_info}"
+
+    pacientes_coll.update_one(
+        {"profissional_id": message.from_user.id, "nome": nome},
+        {"$set": {"evolucao": nova_evolucao}},
+        upsert=True
+    )
+
+    memoria = montar_memoria_clinica({
+        **paciente,
+        "evolucao": nova_evolucao
+    })
+
+    prompt = f"""
+{PROMPT_SISTEMA}
+
+Paciente: {nome}
+
+Histórico clínico completo:
+{memoria}
+
+Nova evolução:
+{nova_info}
+
+Realize:
+1. Análise pós evolução
+2. Interpretação da progressão clínica
+3. Ajustes no raciocínio fisioterapêutico
+4. Próximas condutas recomendadas
+5. Prognóstico
+"""
+
+    chamar_gemini(message, prompt, nome)
+
+
+# --- ADICIONAR INFORMAÇÃO CLÍNICA COM IA ---
+def adicionar_info_clinica(message, nome):
+
+    nova_info = message.text
+
+    pacientes_coll.update_one(
+        {"profissional_id": message.from_user.id, "nome": nome},
+        {
+            "$push": {
+                "registros_clinicos": {
+                    "data": time.strftime("%d/%m/%Y"),
+                    "info": nova_info
+                }
+            }
+        },
+        upsert=True
+    )
+
+    paciente = pacientes_coll.find_one({
+        "profissional_id": message.from_user.id,
+        "nome": nome
+    }) or {}
+
+    memoria = montar_memoria_clinica(paciente)
+
+    prompt = f"""
+{PROMPT_SISTEMA}
+
+Paciente: {nome}
+
+Histórico clínico completo:
+{memoria}
+
+Nova informação clínica:
+{nova_info}
+
+Realize:
+1. Interpretação clínica da nova informação
+2. Impacto no quadro geral
+3. Ajuste do raciocínio clínico
+4. Conduta fisioterapêutica recomendada
+5. Prognóstico atualizado
+"""
+
+    chamar_gemini(message, prompt, nome)
+
 # --- IA ---
 def chamar_gemini(message, prompt, nome_paciente=None):
 

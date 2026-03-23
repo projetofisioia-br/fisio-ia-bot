@@ -7,7 +7,7 @@ from pymongo import MongoClient
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
-def home(): return "MestreFisio V8.0 - Sistema Integrado PRO Ativo"
+def home(): return "MestreFisio V4.7 - Estabilidade de Fluxo PhD Ativa"
 
 def run(): app.run(host='0.0.0.0', port=10000)
 
@@ -20,16 +20,16 @@ TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
-# --- BANCO DE DADOS ---
+# --- BANCO ---
 client = MongoClient(MONGO_URI)
 db = client['mestre_fisio_db']
-usuarios_coll = db['usuarios']
 pacientes_coll = db['pacientes']
+
+bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
 # --- PROMPT ---
 PROMPT_SISTEMA = """
-Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios:
-(Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências).
+Atue como um Fisioterapeuta PhD. Forneça uma análise técnica estruturada em 15 tópicos obrigatórios (Definição, Anatomia/Biomecânica, Etiologia, Sintomas, Raciocínio, Avaliação, Testes, Diagnóstico Diferencial, Exames, Classificação, Conduta, Protocolo Atleta, Algoritmo, Red Flags e Evidências). 
 Use linguagem científica de alto nível e formatação Markdown clara.
 """
 
@@ -44,71 +44,26 @@ def menu_principal():
     )
     return markup
 
-# --- IA COM CONTROLE DE PLANO ---
-def chamar_ia(message, texto_usuario, nome_paciente=None):
-    user_id = message.from_user.id
-    user_data = usuarios_coll.find_one({"user_id": user_id}) or {"plano": "FREE", "consultas": 0}
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.send_message(
+        message.chat.id,
+        "🚀 **MestreFisio V4.7 Especialista**\nSistema de alta performance para análises profundas.",
+        reply_markup=menu_principal()
+    )
 
-    if user_data.get("plano") != "PRO" and user_data.get("consultas", 0) >= 3:
-        bot.send_message(message.chat.id, "⚠️ Limite FREE atingido. Faça upgrade para o Pro.", reply_markup=menu_principal())
-        return
-
-    aguarde = bot.send_message(message.chat.id, "🧠 Processando análise clínica avançada...")
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
-
-    payload = {
-        "contents": [{"parts": [{"text": f"{PROMPT_SISTEMA}\n\nCaso clínico: {texto_usuario}"}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "topP": 0.8
-        }
-    }
-
-    try:
-        response = requests.post(url, json=payload, timeout=120)
-        res_data = response.json()
-
-        if 'candidates' in res_data:
-            analise = res_data['candidates'][0]['content']['parts'][0]['text']
-
-            # salvar paciente
-            if nome_paciente:
-                pacientes_coll.update_one(
-                    {"profissional_id": user_id, "nome": nome_paciente},
-                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
-                    upsert=True
-                )
-
-            # atualizar contador
-            usuarios_coll.update_one(
-                {"user_id": user_id},
-                {"$inc": {"consultas": 1}},
-                upsert=True
-            )
-
-            bot.delete_message(message.chat.id, aguarde.message_id)
-
-            for i in range(0, len(analise), 4000):
-                bot.send_message(message.chat.id, analise[i:i+4000], parse_mode="Markdown")
-
-            bot.send_message(message.chat.id, "✅ Análise concluída.", reply_markup=menu_principal())
-
-        else:
-            erro = res_data.get('error', {}).get('message', 'Erro desconhecido da IA')
-            bot.edit_message_text(f"⚠️ IA: {erro}", message.chat.id, aguarde.message_id)
-
-    except Exception as e:
-        bot.edit_message_text(f"❌ Erro: {str(e)}", message.chat.id, aguarde.message_id)
-
-# --- CALLBACKS ---
+# --- CALLBACK ---
 @bot.callback_query_handler(func=lambda call: True)
-def callback(call):
+def callback_query(call):
     bot.answer_callback_query(call.id)
 
     if call.data == "novo_paciente":
         msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
-        bot.register_next_step_handler(msg, obter_nome)
+        bot.register_next_step_handler(msg, obter_nome_paciente)
+
+    elif call.data == "duvida_tecnica":
+        msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
+        bot.register_next_step_handler(msg, processar_ia_direta)
 
     elif call.data == "ver_historico":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
@@ -118,19 +73,15 @@ def callback(call):
             txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
             bot.send_message(call.message.chat.id, txt)
 
-    elif call.data == "duvida_tecnica":
-        msg = bot.send_message(call.message.chat.id, "💡 Qual sua dúvida?")
-        bot.register_next_step_handler(msg, lambda m: chamar_ia(m, m.text))
-
     elif call.data == "planos":
         try:
             bot.send_invoice(
                 chat_id=call.message.chat.id,
                 title="MestreFisio PhD Pro 💎",
-                description="Acesso ilimitado às análises clínicas",
+                description="Acesso ilimitado às análises.",
                 provider_token=TOKEN_PAYMENT,
                 currency="BRL",
-                prices=[types.LabeledPrice("Plano PRO", 5990)],
+                prices=[types.LabeledPrice("Assinatura Pro", 5990)],
                 invoice_payload="pro_access",
                 start_parameter="pro_access"
             )
@@ -138,15 +89,61 @@ def callback(call):
             bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
 
 # --- FLUXO PACIENTE ---
-def obter_nome(message):
+def obter_nome_paciente(message):
     nome = message.text.upper().strip()
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
-    bot.register_next_step_handler(msg, lambda m: chamar_ia(m, m.text, nome))
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico para análise:")
+    bot.register_next_step_handler(msg, processar_ia_paciente, nome)
 
-# --- START ---
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.send_message(message.chat.id, "🚀 MestreFisio V8.0 - Sistema Clínico Inteligente", reply_markup=menu_principal())
+def processar_ia_paciente(message, nome):
+    prompt = f"{PROMPT_SISTEMA}\n\nAnalise detalhadamente o caso do paciente {nome}: {message.text}"
+    chamar_gemini(message, prompt, nome)
+
+def processar_ia_direta(message):
+    prompt = f"{PROMPT_SISTEMA}\n\nForneça uma explanação técnica PhD sobre: {message.text}"
+    chamar_gemini(message, prompt)
+
+# --- IA ORIGINAL (INTACTA) ---
+def chamar_gemini(message, prompt, nome_paciente=None):
+    aguarde = bot.send_message(
+        message.chat.id,
+        "🧠 **Construindo raciocínio clínico...**\nIsso pode levar até 90s devido à complexidade da estrutura de 15 tópicos."
+    )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
+
+    try:
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=400)
+        res_data = response.json()
+
+        if 'candidates' in res_data:
+            analise = res_data['candidates'][0]['content']['parts'][0]['text']
+
+            if nome_paciente:
+                pacientes_coll.update_one(
+                    {"profissional_id": message.from_user.id, "nome": nome_paciente},
+                    {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
+                    upsert=True
+                )
+
+            bot.delete_message(message.chat.id, aguarde.message_id)
+
+            partes = [analise[i:i+1500] for i in range(0, len(analise), 1500)]
+
+            for p in partes:
+                try:
+                    bot.send_message(message.chat.id, p, parse_mode="Markdown")
+                    time.sleep(1.2)
+                except:
+                    bot.send_message(message.chat.id, p)
+
+            bot.send_message(message.chat.id, "✅ **Análise Finalizada com Sucesso.**", reply_markup=menu_principal())
+
+        else:
+            bot.send_message(message.chat.id, "⚠️ A IA não conseguiu estruturar todos os tópicos.")
+
+    except Exception as e:
+        print(f"Erro: {e}")
+        bot.send_message(message.chat.id, "❌ Falha na conexão técnica.")
 
 # --- EXECUÇÃO ---
 if __name__ == "__main__":

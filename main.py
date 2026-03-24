@@ -75,7 +75,7 @@ Retorne:
 Seja direto e clínico.
 """
 
-    retornar prompt
+    return prompt
 
 
 # --- ALTERAR STATUS ---

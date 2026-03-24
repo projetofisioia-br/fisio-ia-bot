@@ -112,17 +112,18 @@ Use linguagem científica de alto nível e formatação Markdown clara.
 """
 
 # --- MENU ---
-def menu_principal():
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente"),
-        types.InlineKeyboardButton("📂 Histórico de Pacientes", callback_data="ver_historico"),
-        types.InlineKeyboardButton("📝 Atualizar Prontuário", callback_data="atualizar_prontuario"),
-        types.InlineKeyboardButton("➕ Adicionar Informação Clínica", callback_data="add_info"),
-        types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
-        types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
-    )
 
+def menu_principal():
+    m = types.InlineKeyboardMarkup(row_width=1)
+    m.add(
+        types.InlineKeyboardButton("➕ Novo Paciente", callback_data="novo_paciente"),
+        types.InlineKeyboardButton("👥 Pacientes", callback_data="pacientes"),
+        types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
+        types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="ler_exame"),
+        types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos")
+    )
+    return m
+    
     # 🔥 BOTÃO ADMIN
     markup.add(
         types.InlineKeyboardButton("📊 Métricas (Admin)", callback_data="metricas_admin")

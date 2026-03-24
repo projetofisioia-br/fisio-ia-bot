@@ -55,17 +55,17 @@ def salvar_evolucao_v7(user_id, nome, texto):
 
 
 # --- RESUMO CLÍNICO ---
-def gerar_resumo_clinico(paciente):
+def  gerar_resumo_clinico ( paciente ) :
 
-    evolucoes = paciente.get("evolucoes", [])
+    evoluções = paciente. get ( "evoluções" , [ ] )
 
-    historico = "\n".join([e["texto"] for e in evolucoes[-5:]])
+    histórico = "\n" . join ( [ e [ "texto" ]  for e em evoluções [ - 5 : ] ] )
 
     prompt = f"""
-Resuma de forma objetiva:
+Resumo de forma®:
 
 Histórico:
-{historico}
+{ histórico }
 
 Retorne:
 1. Resumo geral
@@ -75,35 +75,35 @@ Retorne:
 Seja direto e clínico.
 """
 
-    return prompt
+    retornar prompt
 
 
 # --- ALTERAR STATUS ---
-def alterar_status(user_id, nome):
+def  alterar_status ( user_id, nome ) :
 
-    paciente = pacientes_coll.find_one({
-        "profissional_id": user_id,
-        "nome": nome
-    })
+    paciente = pacientes_coll. encontrar_um ( {
+        "profissional_id" : user_id,
+        "nome" : nome
+    } )
 
-    novo = "alta" if paciente.get("status") == "ativo" else "ativo"
+    novo = "alta"  se paciente. get ( "status" ) == "ativo"  else  "ativo"
 
-    pacientes_coll.update_one(
-        {"profissional_id": user_id, "nome": nome},
-        {"$set": {"status": novo}}
+    pacientes_coll. atualização_um (
+        { "profissional_id" : user_id, "nome" : nome } ,
+        { "$set" : { "status" : novo } }
     )
 
 
 # --- LEITURA DE EXAMES ---
-def processar_exame(message):
+def  processar_exame ( mensagem ) :
 
-    file_info = bot.get_file(message.document.file_id if message.document else message.photo[-1].file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
+    informações_arquivo = bot.get_file ( message.document.file_id if message.document else message.photo [ -1 ] .file_id  )​​​​​​ 
+arquivo_baixado =     bot.baixar_arquivo ( informações_do_arquivo.caminho_do_arquivo )
 
-    caminho = f"exame_{message.from_user.id}.jpg"
+    caminho = f"exame_ { mensagem. from_user . id } .jpg"
 
-    with open(caminho, "wb") as f:
-        f.write(downloaded_file)
+    com  open ( caminho, "wb" )  como f:
+        f. escrever ( arquivo_baixado )
 
     prompt = f"""
 Analise o exame enviado.
@@ -286,8 +286,7 @@ def callback_query(call):
     bot.answer_callback_query(call.id)
 
     elif call.data == "planos":
-    bot.send_message(
-        call.message.chat.id,
+    bot.send_message(call.message.chat.id,
         "💰 Planos disponíveis:\n\n"
         "🔹 Mensal\n"
         "🔹 Semestral\n\n"

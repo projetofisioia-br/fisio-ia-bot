@@ -666,7 +666,6 @@ Realize:
 # --- IA ---
 def chamar_gemini(message, prompt, nome_paciente=None):
 
-    # 🔥 ADMIN LIBERADO + REGISTRO USUÁRIO
     if not is_admin(message.from_user.id):
         registrar_usuario_se_novo(message.from_user.id)
 
@@ -679,19 +678,35 @@ def chamar_gemini(message, prompt, nome_paciente=None):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
 
     try:
-        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=400)
+        response = requests.post(
+            url,
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=400
+        )
+
         res_data = response.json()
 
         try:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
+        except:
             bot.delete_message(message.chat.id, aguarde.message_id)
             bot.send_message(message.chat.id, "⚠️ Erro ao interpretar resposta da IA.")
             print(res_data)
             return
-            if nome_paciente:
+
+        # ✅ ESTE BLOCO PRECISA ESTAR DENTRO DO TRY
+        if nome_paciente:
             pacientes_coll.update_one(
-                {"profissional_id": message.from_user.id, "nome": nome_paciente},
-                {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},
+                {
+                    "profissional_id": message.from_user.id,
+                    "nome": nome_paciente
+                },
+                {
+                    "$set": {
+                        "ultima_analise": analise,
+                        "data": time.strftime("%d/%m/%Y")
+                    }
+                },
                 upsert=True
             )
 
@@ -701,8 +716,13 @@ def chamar_gemini(message, prompt, nome_paciente=None):
             bot.send_message(message.chat.id, p)
             time.sleep(1)
 
-        bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal()) 
-        return analise 
+        bot.send_message(
+            message.chat.id,
+            "✅ Finalizado.",
+            reply_markup=menu_principal()
+        )
+
+        return analise
 
     except Exception as e:
         print(e)

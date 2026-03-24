@@ -4,117 +4,6 @@ from flask import Flask
 from threading import Thread
 from pymongo import MongoClient
 
-# =========================
-# 🧠 V7 - MÓDULO CLÍNICO PREMIUM
-# =========================
-
-from datetime import datetime
-
-# --- BUSCA PACIENTES ---
-def buscar_pacientes(user_id, texto=None, status=None, ordem="nome"):
-    
-    query = {"profissional_id": user_id}
-
-    if status:
-        query["status"] = status
-
-    pacientes = list(pacientes_coll.find(query))
-
-    if texto:
-        pacientes = [p for p in pacientes if texto.lower() in p["nome"].lower()]
-
-    if ordem == "nome":
-        pacientes.sort(key=lambda x: x["nome"])
-    elif ordem == "nome_desc":
-        pacientes.sort(key=lambda x: x["nome"], reverse=True)
-    elif ordem == "data":
-        pacientes.sort(key=lambda x: x.get("data_criacao",""), reverse=True)
-
-    return pacientes
-
-
-# --- EVOLUÇÃO DIÁRIA (UNIFICADO) ---
-def salvar_evolucao_v7(user_id, nome, texto):
-
-    pacientes_coll.update_one(
-        {"profissional_id": user_id, "nome": nome},
-        {
-            "$push": {
-                "evolucoes": {
-                    "data": datetime.now().strftime("%d/%m/%Y"),
-                    "texto": texto
-                }
-            },
-            "$set": {
-                "ultima_atualizacao": datetime.now().strftime("%d/%m/%Y"),
-                "status": "ativo"
-            }
-        },
-        upsert=True
-    )
-
-
-# --- RESUMO CLÍNICO ---
-def gerar_resumo_clinico(paciente):
-    evolucoes = paciente.get("evolucoes", [])
-    historico = "\n".join([e.get("texto", "") for e in evolucoes[-5:]])
-    
-    prompt = f"""
-    
-Resumo de forma®:
-
-Histórico:
-{ histórico }
-
-Retorne:
-1. Resumo geral
-2. Evolução do caso
-3. Conduta para próximas 3 sessões
-
-Seja direto e clínico.
-"""
-
-return prompt
-
-
-# --- ALTERAR STATUS ---
-def alterar_status(user_id, nome):
-    paciente = pacientes_coll.find_one({
-        "profissional_id": user_id,
-        "nome": nome
-    })
-
-    novo = "alta" if paciente.get("status") == "ativo" else "ativo"
-
-    pacientes_coll.update_one(
-        {"profissional_id": user_id, "nome": nome},
-        {"$set": {"status": novo}}
-    )
-
-
-# --- LEITURA DE EXAMES ---
-def processar_exame(message):
-    file_id = message.document.file_id if message.document else message.photo[-1].file_id
-    
-    info_arquivo = bot.get_file(file_id)
-    arquivo_baixado = bot.download_file(info_arquivo.file_path)
-
-    caminho = f"exame_{message.from_user.id}.jpg"
-
-    with open(caminho, "wb") as f:
-        f.write(arquivo_baixado)
-
-    prompt = """
-    Analise o exame enviado.
-    Forneça:
-    - Interpretação clínica
-    - Possíveis achados
-    - Relação com disfunções musculoesqueléticas
-    - Conduta fisioterapêutica
-    """
-
-    chamar_gemini(message, prompt)
-
 # --- SERVIDOR WEB ---
 app = Flask('')
 @app.route('/')
@@ -224,15 +113,15 @@ Use linguagem científica de alto nível e formatação Markdown clara.
 
 # --- MENU ---
 def menu_principal():
-    m = types.InlineKeyboardMarkup(row_width=1)
-    m.add(
-        types.InlineKeyboardButton("➕ Novo Paciente", callback_data="novo_paciente"),
-        types.InlineKeyboardButton("👥 Pacientes", callback_data="pacientes"),
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("👤 Novo Paciente", callback_data="novo_paciente"),
+        types.InlineKeyboardButton("📂 Histórico de Pacientes", callback_data="ver_historico"),
+        types.InlineKeyboardButton("📝 Atualizar Prontuário", callback_data="atualizar_prontuario"),
+        types.InlineKeyboardButton("➕ Adicionar Informação Clínica", callback_data="add_info"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
-        types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="ler_exame"),
-        types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos")
+        types.InlineKeyboardButton("💎 Planos de Acesso Pro", callback_data="planos")
     )
-    return m
 
     # 🔥 BOTÃO ADMIN
     markup.add(
@@ -282,31 +171,6 @@ def selecionar_tipo_laudo(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
-if call.data == "planos":
-    elif call.data == "planos":
-    bot.send_message(call.message.chat.id,
-        "💰 Planos disponíveis:\n\n"
-        "🔹 Mensal\n"
-        "🔹 Semestral\n\n"
-        "Em breve integração completa com pagamento automático."
-    )
-    
-    elif call.data == "ler_exame":
-    bot.send_message(call.message.chat.id, "📷 Envie imagem ou PDF do exame.")
-
-    elif call.data == "pacientes":
-    pacientes = buscar_pacientes(call.from_user.id)
-
-    markup = types.InlineKeyboardMarkup()
-
-    for p in pacientes:
-        status = "🟢" if p.get("status","ativo")=="ativo" else "⚪"
-        markup.add(types.InlineKeyboardButton(
-            f"{status} {p['nome']}",
-            callback_data=f"paciente_{p['nome']}"
-        ))
-
-    bot.send_message(call.message.chat.id, "👥 Pacientes:", reply_markup=markup)
 
     if call.data == "novo_paciente":
         msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
@@ -477,6 +341,28 @@ def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
     return nome_arquivo
 
 
+# --- MENU DE LAUDOS ---
+
+    
+# =========================
+# 📄 SISTEMA DE LAUDOS (POR PACIENTE)
+# =========================
+
+# --- GERAR PDF ---
+def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
+
+    doc = SimpleDocTemplate(nome_arquivo)
+    styles = getSampleStyleSheet()
+
+    conteudo = []
+
+    for linha in texto.split("\n"):
+        conteudo.append(Paragraph(linha, styles["Normal"]))
+        conteudo.append(Spacer(1, 10))
+
+    doc.build(conteudo)
+
+    return nome_arquivo
 
 
 # --- COMANDO /laUDO ---
@@ -842,14 +728,9 @@ def chamar_gemini(message, prompt, nome_paciente=None):
         print(e)
         bot.send_message(message.chat.id, "❌ Erro na IA.")
 
-@bot.message_handler(content_types=['photo','document'])
-def receber_exame(message):
-    processar_exame(message)
-    
 # --- EXECUÇÃO ---
 if __name__ == "__main__":
     Thread(target=run).start()
     bot.remove_webhook()
     time.sleep(2)
     bot.infinity_polling(timeout=120, long_polling_timeout=60)
-    

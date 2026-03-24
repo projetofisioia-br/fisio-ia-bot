@@ -282,7 +282,7 @@ def selecionar_tipo_laudo(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
-if call.data == "planos"
+if call.data == "planos":
     elif call.data == "planos":
     bot.send_message(call.message.chat.id,
         "💰 Planos disponíveis:\n\n"

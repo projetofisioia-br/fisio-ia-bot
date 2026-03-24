@@ -138,6 +138,35 @@ def send_welcome(message):
         reply_markup=menu_principal()
     )
 
+# =========================
+# 🧾 COMANDO DE LAUDOS
+# =========================
+
+@bot.message_handler(commands=['laudo'])
+def iniciar_laudo(message):
+    menu_laudos(message.chat.id)
+
+
+@bot.message_handler(func=lambda message: message.text in [
+    "🧾 Laudo clínico",
+    "🏋️ Exercícios",
+    "📉 Evolução",
+    "🛌 Atestado",
+    "⚡ Tratamento",
+    "📊 Convênio",
+    "🧠 Biomecânica"
+])
+def selecionar_tipo_laudo(message):
+
+    tipo = message.text
+
+    msg = bot.send_message(
+        message.chat.id,
+        f"✍️ Envie os dados clínicos para gerar:\n{tipo}"
+    )
+
+    bot.register_next_step_handler(msg, gerar_laudo, tipo)
+
 # --- CALLBACK ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
@@ -287,6 +316,242 @@ Atualize o raciocínio considerando toda evolução.
 def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
     chamar_gemini(message, prompt)
+
+# =========================
+# 📄 SISTEMA DE LAUDOS + PDF
+# =========================
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+
+# --- GERAR PDF ---
+def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
+
+    doc = SimpleDocTemplate(nome_arquivo)
+    styles = getSampleStyleSheet()
+
+    conteudo = []
+
+    for linha in texto.split("\n"):
+        conteudo.append(Paragraph(linha, styles["Normal"]))
+        conteudo.append(Spacer(1, 10))
+
+    doc.build(conteudo)
+
+    return nome_arquivo
+
+
+# --- MENU DE LAUDOS ---
+def menu_laudos(chat_id):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+
+    botoes = [
+        "🧾 Laudo clínico",
+        "🏋️ Exercícios",
+        "📉 Evolução",
+        "🛌 Atestado",
+        "⚡ Tratamento",
+        "📊 Convênio",
+        "🧠 Biomecânica"
+    ]
+
+    markup.add(*botoes)
+
+    bot.send_message(chat_id, "Escolha o tipo de laudo:", reply_markup=markup)
+
+
+# --- PROMPTS POR TIPO ---
+def montar_prompt_laudo(tipo, dados):
+
+    if "Laudo clínico" in tipo:
+        return f"""
+Gere um laudo fisioterapêutico completo contendo:
+
+- Queixa principal
+- Avaliação
+- Diagnóstico cinético-funcional
+- Conduta
+- Prognóstico
+
+Dados:
+{dados}
+"""
+
+    elif "Exercícios" in tipo:
+        return f"""
+Crie um plano de exercícios fisioterapêuticos:
+
+- Nome do exercício
+- Execução
+- Séries e repetições
+- Cuidados
+
+Baseado em:
+{dados}
+"""
+
+    elif "Evolução" in tipo:
+        return f"""
+Analise a evolução do paciente e gere:
+
+- Comparação de sessões
+- Melhoras
+- Pontos de atenção
+- Próximas condutas
+"""
+
+    elif "Atestado" in tipo:
+        return f"""
+Gere um atestado fisioterapêutico contendo:
+
+- Nome do paciente
+- Justificativa clínica
+- Tempo de afastamento
+- Data
+- Assinatura profissional
+"""
+
+    elif "Tratamento" in tipo:
+        return f"""
+Monte um plano de tratamento completo:
+
+- Objetivos
+- Frequência
+- Técnicas utilizadas
+- Tempo estimado
+"""
+
+    elif "Convênio" in tipo:
+# =========================
+# 📄 SISTEMA DE LAUDOS (POR PACIENTE)
+# =========================
+
+# --- GERAR PDF ---
+def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
+
+    doc = SimpleDocTemplate(nome_arquivo)
+    styles = getSampleStyleSheet()
+
+    conteudo = []
+
+    for linha in texto.split("\n"):
+        conteudo.append(Paragraph(linha, styles["Normal"]))
+        conteudo.append(Spacer(1, 10))
+
+    doc.build(conteudo)
+
+    return nome_arquivo
+
+
+# --- COMANDO /laUDO ---
+@bot.message_handler(commands=['laudo'])
+def iniciar_laudo(message):
+
+    pacientes = list(pacientes_coll.find({"profissional_id": message.from_user.id}))
+
+    if not pacientes:
+        bot.send_message(message.chat.id, "📭 Nenhum paciente cadastrado.")
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+
+    for p in pacientes:
+        markup.add(types.InlineKeyboardButton(
+            p["nome"],
+            callback_data=f"laudo_paciente|{p['nome']}"
+        ))
+
+    bot.send_message(message.chat.id, "Selecione o paciente:", reply_markup=markup)
+
+
+# --- CALLBACK LAUDOS ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("laudo_"))
+def fluxo_laudos(call):
+
+    bot.answer_callback_query(call.id)
+
+    # 🔹 ESCOLHA DO PACIENTE
+    if call.data.startswith("laudo_paciente"):
+        nome = call.data.split("|")[1]
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+
+        tipos = [
+            ("🧾 Laudo clínico", "clinico"),
+            ("🏋️ Exercícios", "exercicios"),
+            ("📉 Evolução", "evolucao"),
+            ("🛌 Atestado", "atestado"),
+            ("⚡ Tratamento", "tratamento"),
+            ("📊 Convênio", "convenio"),
+            ("🧠 Biomecânica", "biomecanica")
+        ]
+
+        for nome_tipo, tipo in tipos:
+            markup.add(types.InlineKeyboardButton(
+                nome_tipo,
+                callback_data=f"laudo_tipo|{tipo}|{nome}"
+            ))
+
+        bot.send_message(call.message.chat.id, f"Tipo de laudo para {nome}:", reply_markup=markup)
+
+    # 🔹 GERAÇÃO DO LAUDO
+    elif call.data.startswith("laudo_tipo"):
+
+        _, tipo, nome = call.data.split("|")
+
+        paciente = pacientes_coll.find_one({
+            "profissional_id": call.from_user.id,
+            "nome": nome
+        }) or {}
+
+        memoria = montar_memoria_clinica(paciente)
+
+        user = uso_coll.find_one({"user_id": call.from_user.id}) or {}
+
+        nome_prof = user.get("nome_profissional", "Não informado")
+        registro_prof = user.get("registro_profissional", "Não informado")
+
+        prompt = f"""
+{PROMPT_SISTEMA}
+
+Paciente: {nome}
+
+Histórico clínico completo:
+{memoria}
+
+Gere um laudo do tipo: {tipo}
+
+Inclua:
+- Análise clínica
+- Conduta
+- Prognóstico
+
+Finalize com assinatura profissional.
+"""
+
+        resposta = chamar_gemini(call.message, prompt)
+
+        if not resposta:
+            bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
+            return
+
+        texto_final = f"""
+Paciente: {nome}
+
+{resposta}
+
+---
+
+Profissional responsável:
+{nome_prof}
+Registro: {registro_prof}
+"""
+
+        arquivo = gerar_pdf(texto_final)
+
+        with open(arquivo, "rb") as f:
+            bot.send_document(call.message.chat.id, f)
+
 # =========================
 # 💰 SISTEMA DE PAGAMENTO PRO + ASSINATURA
 # =========================
@@ -516,7 +781,8 @@ def chamar_gemini(message, prompt, nome_paciente=None):
             bot.send_message(message.chat.id, p)
             time.sleep(1)
 
-        bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal())
+        bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal()) 
+        return analise 
 
     except Exception as e:
         print(e)

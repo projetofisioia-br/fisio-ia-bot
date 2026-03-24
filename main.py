@@ -688,8 +688,7 @@ def chamar_gemini(message, prompt, nome_paciente=None):
             bot.send_message(message.chat.id, "⚠️ Erro ao interpretar resposta da IA.")
             print(res_data)
             return
-
-        if nome_paciente:
+            if nome_paciente:
             pacientes_coll.update_one(
                 {"profissional_id": message.from_user.id, "nome": nome_paciente},
                 {"$set": {"ultima_analise": analise, "data": time.strftime("%d/%m/%Y")}},

@@ -287,7 +287,102 @@ Atualize o raciocínio considerando toda evolução.
 def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
     chamar_gemini(message, prompt)
+# =========================
+# 💰 SISTEMA DE PAGAMENTO PRO + ASSINATURA
+# =========================
 
+# --- CONFIRMAÇÃO DO CHECKOUT (OBRIGATÓRIO) ---
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def process_pre_checkout_query(pre_checkout_query):
+    try:
+        bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+    except Exception as e:
+        print("Erro no pre_checkout:", e)
+
+
+# --- PAGAMENTO APROVADO ---
+@bot.message_handler(content_types=['successful_payment'])
+def pagamento_sucesso(message):
+
+    user_id = message.from_user.id
+
+    # 🔥 libera PRO por 30 dias
+    uso_coll.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "uso": 0,
+                "pro": True,
+                "pro_expira_em": time.time() + (30 * 24 * 60 * 60)  # 30 dias
+            }
+        },
+        upsert=True
+    )
+
+    bot.send_message(
+        message.chat.id,
+        "💎 Pagamento aprovado!\nPlano PRO ativo por 30 dias 🚀"
+    )
+
+
+# --- VERIFICAÇÃO DE EXPIRAÇÃO ---
+def verificar_assinatura(user):
+
+    if user.get("pro"):
+
+        expira = user.get("pro_expira_em", 0)
+
+        if time.time() > expira:
+            uso_coll.update_one(
+                {"user_id": user["user_id"]},
+                {"$set": {"pro": False}}
+            )
+            return False
+
+        return True
+
+    return False
+
+
+# --- RENOVAÇÃO AUTOMÁTICA (simples) ---
+def renovar_plano(user_id):
+
+    uso_coll.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "pro": True,
+                "pro_expira_em": time.time() + (30 * 24 * 60 * 60)
+            }
+        }
+    )
+
+
+# --- ALTERAÇÃO NA FUNÇÃO DE USO ---
+def pode_usar(user_id):
+
+    if is_admin(user_id):
+        return True
+
+    user = uso_coll.find_one({"user_id": user_id})
+
+    if not user:
+        uso_coll.insert_one({"user_id": user_id, "uso": 1})
+        return True
+
+    # 🔥 VERIFICA ASSINATURA
+    if verificar_assinatura(user):
+        return True
+
+    if user["uso"] >= LIMITE_GRATUITO:
+        return False
+
+    uso_coll.update_one(
+        {"user_id": user_id},
+        {"$inc": {"uso": 1}}
+    )
+
+    return True
 # --- ATUALIZAÇÃO DE PRONTUÁRIO COM IA ---
 def salvar_evolucao(message, nome):
 

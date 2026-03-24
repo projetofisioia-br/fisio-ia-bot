@@ -55,13 +55,12 @@ def salvar_evolucao_v7(user_id, nome, texto):
 
 
 # --- RESUMO CLÍNICO ---
-def  gerar_resumo_clinico ( paciente ) :
-
-    evoluções = paciente. get ( "evoluções" , [ ] )
-
-    histórico = "\n" . join ( [ e [ "texto" ]  for e in evoluções [ - 5 : ] ] )
-
+def gerar_resumo_clinico(paciente):
+    evolucoes = paciente.get("evolucoes", [])
+    historico = "\n".join([e.get("texto", "") for e in evolucoes[-5:]])
+    
     prompt = f"""
+    
 Resumo de forma®:
 
 Histórico:
@@ -75,46 +74,44 @@ Retorne:
 Seja direto e clínico.
 """
 
-    return prompt
+return prompt
 
 
 # --- ALTERAR STATUS ---
-def  alterar_status ( user_id, nome ) :
+def alterar_status(user_id, nome):
+    paciente = pacientes_coll.find_one({
+        "profissional_id": user_id,
+        "nome": nome
+    })
 
-    paciente = pacientes_coll. encontrar_um ( {
-        "profissional_id" : user_id,
-        "nome" : nome
-    } )
+    novo = "alta" if paciente.get("status") == "ativo" else "ativo"
 
-    novo = "alta"  se paciente. get ( "status" ) == "ativo"  else  "ativo"
-
-    pacientes_coll. atualização_um (
-        { "profissional_id" : user_id, "nome" : nome } ,
-        { "$set" : { "status" : novo } }
+    pacientes_coll.update_one(
+        {"profissional_id": user_id, "nome": nome},
+        {"$set": {"status": novo}}
     )
 
 
 # --- LEITURA DE EXAMES ---
-def  processar_exame ( mensagem ) :
+def processar_exame(message):
+    file_id = message.document.file_id if message.document else message.photo[-1].file_id
+    
+    info_arquivo = bot.get_file(file_id)
+    arquivo_baixado = bot.download_file(info_arquivo.file_path)
 
-file_id = message.document.file_id if message.document else message.photo[-1].file_id
-informacoes_arquivo = bot.get_file(file_id)
-arquivo_baixado = bot.baixar_arquivo ( informações_do_arquivo.caminho_do_arquivo )
+    caminho = f"exame_{message.from_user.id}.jpg"
 
-    caminho = f"exame_ { mensagem. from_user . id } .jpg"
+    with open(caminho, "wb") as f:
+        f.write(arquivo_baixado)
 
-    com  open ( caminho, "wb" )  como f:
-        f. escrever ( arquivo_baixado )
-
-    prompt = f"""
-Analise o exame enviado.
-
-Forneça:
-- Interpretação clínica
-- Possíveis achados
-- Relação com disfunções musculoesqueléticas
-- Conduta fisioterapêutica
-"""
+    prompt = """
+    Analise o exame enviado.
+    Forneça:
+    - Interpretação clínica
+    - Possíveis achados
+    - Relação com disfunções musculoesqueléticas
+    - Conduta fisioterapêutica
+    """
 
     chamar_gemini(message, prompt)
 
@@ -285,7 +282,7 @@ def selecionar_tipo_laudo(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
-
+if call.data == "planos"
     elif call.data == "planos":
     bot.send_message(call.message.chat.id,
         "💰 Planos disponíveis:\n\n"
@@ -480,28 +477,6 @@ def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
     return nome_arquivo
 
 
-# --- MENU DE LAUDOS ---
-
-    
-# =========================
-# 📄 SISTEMA DE LAUDOS (POR PACIENTE)
-# =========================
-
-# --- GERAR PDF ---
-def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
-
-    doc = SimpleDocTemplate(nome_arquivo)
-    styles = getSampleStyleSheet()
-
-    conteudo = []
-
-    for linha in texto.split("\n"):
-        conteudo.append(Paragraph(linha, styles["Normal"]))
-        conteudo.append(Spacer(1, 10))
-
-    doc.build(conteudo)
-
-    return nome_arquivo
 
 
 # --- COMANDO /laUDO ---

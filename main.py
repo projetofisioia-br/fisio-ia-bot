@@ -97,7 +97,8 @@ def  alterar_status ( user_id, nome ) :
 # --- LEITURA DE EXAMES ---
 def  processar_exame ( mensagem ) :
 
-informacoes_arquivo = bot.get_file ( message.document.file_id if message.document else message.photo[-1].file_id)​​​​​​
+file_id = message.document.file_id if message.document else message.photo[-1].file_id
+informacoes_arquivo = bot.get_file(file_id)
 arquivo_baixado = bot.baixar_arquivo ( informações_do_arquivo.caminho_do_arquivo )
 
     caminho = f"exame_ { mensagem. from_user . id } .jpg"

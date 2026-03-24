@@ -324,44 +324,41 @@ def processar_ia_direta(message):
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
-# --- GERAR PDF ---
-def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
-
-    doc = SimpleDocTemplate(nome_arquivo)
-    styles = getSampleStyleSheet()
-
-    conteudo = []
-
-    for linha in texto.split("\n"):
-        conteudo.append(Paragraph(linha, styles["Normal"]))
-        conteudo.append(Spacer(1, 10))
-
-    doc.build(conteudo)
-
-    return nome_arquivo
-
-
-# --- MENU DE LAUDOS ---
-
     
 # =========================
 # 📄 SISTEMA DE LAUDOS (POR PACIENTE)
 # =========================
 
 # --- GERAR PDF ---
-def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
+def gerar_pdf(texto, nome_paciente="Paciente", tipo="Laudo"):
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.pagesizes import A4
 
-    doc = SimpleDocTemplate(nome_arquivo)
+    nome_arquivo = f"{tipo}_{nome_paciente}.pdf".replace(" ", "_")
+
+    doc = SimpleDocTemplate(nome_arquivo, pagesize=A4)
     styles = getSampleStyleSheet()
-
     conteudo = []
 
+    # 🔥 TÍTULO
+    conteudo.append(Paragraph(f"<b>{tipo.upper()}</b>", styles["Title"]))
+    conteudo.append(Spacer(1, 20))
+
+    # 🔥 TEXTO FORMATADO
     for linha in texto.split("\n"):
-        conteudo.append(Paragraph(linha, styles["Normal"]))
+        if linha.strip() == "":
+            continue
+
+        # Destaque para títulos
+        if linha.startswith("#") or linha.endswith(":"):
+            conteudo.append(Paragraph(f"<b>{linha}</b>", styles["Heading3"]))
+        else:
+            conteudo.append(Paragraph(linha, styles["Normal"]))
+
         conteudo.append(Spacer(1, 10))
 
     doc.build(conteudo)
-
     return nome_arquivo
 
 
@@ -469,7 +466,7 @@ Profissional responsável:
 Registro: {registro_prof}
 """
 
-        arquivo = gerar_pdf(texto_final)
+        arquivo = gerar_pdf(texto_final, nome, tipo)
 
         with open(arquivo, "rb") as f:
             bot.send_document(call.message.chat.id, f)

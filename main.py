@@ -342,86 +342,8 @@ def gerar_pdf(texto, nome_arquivo="laudo.pdf"):
 
 
 # --- MENU DE LAUDOS ---
-def menu_laudos(chat_id):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    botoes = [
-        "🧾 Laudo clínico",
-        "🏋️ Exercícios",
-        "📉 Evolução",
-        "🛌 Atestado",
-        "⚡ Tratamento",
-        "📊 Convênio",
-        "🧠 Biomecânica"
-    ]
-
-    markup.add(*botoes)
-
-    bot.send_message(chat_id, "Escolha o tipo de laudo:", reply_markup=markup)
-
-
-# --- PROMPTS POR TIPO ---
-def montar_prompt_laudo(tipo, dados):
-
-    if "Laudo clínico" in tipo:
-        return f"""
-Gere um laudo fisioterapêutico completo contendo:
-
-- Queixa principal
-- Avaliação
-- Diagnóstico cinético-funcional
-- Conduta
-- Prognóstico
-
-Dados:
-{dados}
-"""
-
-    elif "Exercícios" in tipo:
-        return f"""
-Crie um plano de exercícios fisioterapêuticos:
-
-- Nome do exercício
-- Execução
-- Séries e repetições
-- Cuidados
-
-Baseado em:
-{dados}
-"""
-
-    elif "Evolução" in tipo:
-        return f"""
-Analise a evolução do paciente e gere:
-
-- Comparação de sessões
-- Melhoras
-- Pontos de atenção
-- Próximas condutas
-"""
-
-    elif "Atestado" in tipo:
-        return f"""
-Gere um atestado fisioterapêutico contendo:
-
-- Nome do paciente
-- Justificativa clínica
-- Tempo de afastamento
-- Data
-- Assinatura profissional
-"""
-
-    elif "Tratamento" in tipo:
-        return f"""
-Monte um plano de tratamento completo:
-
-- Objetivos
-- Frequência
-- Técnicas utilizadas
-- Tempo estimado
-"""
-
-    elif "Convênio" in tipo:
+    
 # =========================
 # 📄 SISTEMA DE LAUDOS (POR PACIENTE)
 # =========================

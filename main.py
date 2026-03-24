@@ -59,7 +59,7 @@ def  gerar_resumo_clinico ( paciente ) :
 
     evoluções = paciente. get ( "evoluções" , [ ] )
 
-    histórico = "\n" . join ( [ e [ "texto" ]  for e em evoluções [ - 5 : ] ] )
+    histórico = "\n" . join ( [ e [ "texto" ]  for e in evoluções [ - 5 : ] ] )
 
     prompt = f"""
 Resumo de forma®:

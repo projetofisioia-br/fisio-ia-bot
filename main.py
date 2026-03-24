@@ -1,4 +1,4 @@
-import telebot, requests, os, time
+        import telebot, requests, os, time
 from telebot import types
 from flask import Flask
 from threading import Thread
@@ -762,7 +762,6 @@ def chamar_gemini(message, prompt, nome_paciente=None):
 
         try:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
-        except:
             bot.delete_message(message.chat.id, aguarde.message_id)
             bot.send_message(message.chat.id, "⚠️ Erro ao interpretar resposta da IA.")
             print(res_data)
@@ -794,3 +793,4 @@ if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(2)
     bot.infinity_polling(timeout=120, long_polling_timeout=60)
+    

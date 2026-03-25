@@ -184,7 +184,7 @@ def callback_query(call):
     elif call.data in ["analisar_laudo", "ler_exame"]:
        user_state[call.from_user.id] = "aguardando_laudo"
 
-        bot.send_message(
+    bot.send_message(
         call.message.chat.id,
         "📷 Envie a imagem ou PDF do laudo para análise."
         )

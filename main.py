@@ -269,12 +269,12 @@ def callback_query(call):
     {resumo}
     """
 
-    msg = bot.send_message(
+        msg = bot.send_message(
         call.message.chat.id,
         texto + "\n\n✍️ Envie nova evolução:"
-    )
+        )
 
-    bot.register_next_step_handler(msg, salvar_evolucao, nome)
+        bot.register_next_step_handler(msg, salvar_evolucao, nome)
 
 
 # 🔹 ADICIONAR INFO CLÍNICA (lista)

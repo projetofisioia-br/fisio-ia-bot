@@ -272,7 +272,7 @@ def callback_query(call):
         listar_pacientes(call.message)
 
     elif call.data == "analisar_laudo":
-    bot.send_message(call.message.chat.id, "📷 Envie o laudo para análise.")
+        bot.send_message(call.message.chat.id, "📷 Envie o laudo para análise.")
 
     elif call.data == "planos":
         try:

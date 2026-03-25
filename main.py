@@ -269,7 +269,7 @@ def callback_query(call):
         bot.register_next_step_handler(msg, adicionar_info_clinica, nome)
 
     elif call.data == "pacientes":
-    listar_pacientes(call.message)
+        listar_pacientes(call.message)
 
     elif call.data == "analisar_laudo":
     bot.send_message(call.message.chat.id, "📷 Envie o laudo para análise.")

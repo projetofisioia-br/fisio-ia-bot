@@ -181,7 +181,9 @@ def callback_query(call):
         msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
         bot.register_next_step_handler(msg, processar_ia_direta)
   
-    elif call.data == "ler_exame":
+    elif call.data in ["analisar_laudo", "ler_exame"]:
+       user_state[call.from_user.id] = "aguardando_laudo"
+
         bot.send_message(
         call.message.chat.id,
         "📷 Envie a imagem ou PDF do laudo para análise."
@@ -546,7 +548,33 @@ Registro: {registro_prof}
 
         with open(arquivo, "rb") as f:
             bot.send_document(call.message.chat.id, f)
+            
+@bot.message_handler(content_types=['photo', 'document'])
+def receber_arquivo(message):
 
+    estado = user_state.get(message.from_user.id)
+
+    if estado != "aguardando_laudo":
+        return
+
+    bot.send_message(message.chat.id, "🔍 Analisando laudo...")
+
+    try:
+        resultado = ler_exame(message)
+
+        bot.send_message(
+            message.chat.id,
+            f"🧠 Resultado da análise:\n\n{resultado}"
+        )
+
+    except Exception as e:
+        bot.send_message(
+            message.chat.id,
+            f"❌ Erro ao analisar:\n{str(e)}"
+        )
+
+    user_state.pop(message.from_user.id, None)
+    
 # =========================
 # 💰 SISTEMA DE PAGAMENTO PRO + ASSINATURA
 # =========================

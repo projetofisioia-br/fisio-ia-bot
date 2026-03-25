@@ -306,8 +306,8 @@ def callback_query(call):
             bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
             return
 
-            resumo = paciente.get("evolucao", "Sem evolução registrada.")
-            ultima = paciente.get("ultima_analise", "Sem análise anterior.")
+        resumo = paciente.get("evolucao", "Sem evolução registrada.")
+        ultima = paciente.get("ultima_analise", "Sem análise anterior.")
 
         texto = f"""📂 {nome}
 
@@ -433,9 +433,26 @@ def obter_nome_paciente(message):
 def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
     chamar_gemini(message, prompt)
-    
+
+@bot.message_handler(content_types=['photo', 'document'])
+def receber_arquivo(message):
+
+    estado = user_state.get(message.from_user.id)
+
+    if not estado:
+        bot.send_message(message.chat.id, "⚠️ Nenhuma ação em andamento.")
+        return
+
+    if estado["tipo"] == "laudo":
+
+        bot.send_message(message.chat.id, "🔍 Processando laudo...")
+
+        processar_laudo(message)
+
+        user_state.pop(message.from_user.id, None)
+
 # --- FLUXO PACIENTE ---
-def obter_nome_paciente(message):
+def obter_nome_paciente_fluxo(message):
     nome = message.text.upper().strip()
     msg = bot.send_message(message.chat.id, f"✅ Paciente: **{nome}**\nDescreva o quadro clínico:")
     bot.register_next_step_handler(msg, processar_ia_paciente, nome)

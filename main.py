@@ -407,7 +407,7 @@ def processar_laudo(message):
             message.document.file_id if message.document else message.photo[-1].file_id
         )
 
-        file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
+        file_url = f"https://api.telegram.org/file/bot{TOKEN_TELEGRAM}/{file_info.file_path}"
 
         prompt = f"""
         {PROMPT_SISTEMA}

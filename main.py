@@ -230,13 +230,13 @@ def callback_query(call):
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
 
         if not pacientes:
-        bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
             return
 
         markup = types.InlineKeyboardMarkup(row_width=1)
 
         for p in pacientes:
-        markup.add(types.InlineKeyboardButton(
+            markup.add(types.InlineKeyboardButton(
             f"{p['nome']}",
             callback_data=f"editar_{p['nome']}"
         ))
@@ -254,7 +254,7 @@ def callback_query(call):
         })
 
         if not paciente:
-        bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
+            bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
             return
 
         resumo = paciente.get("evolucao", "Sem evolução registrada ainda.")
@@ -283,13 +283,13 @@ def callback_query(call):
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
 
         if not pacientes:
-        bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
             return
 
         markup = types.InlineKeyboardMarkup(row_width=1)
 
         for p in pacientes:
-        markup.add(types.InlineKeyboardButton(
+            markup.add(types.InlineKeyboardButton(
             f"{p['nome']}",
             callback_data=f"addinfo_{p['nome']}"
         ))

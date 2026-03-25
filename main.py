@@ -251,37 +251,92 @@ def selecionar_tipo_laudo(message):
     bot.register_next_step_handler(msg, gerar_laudo, tipo)
 
 # --- CALLBACK ---
+# --- SISTEMA UNIFICADO PACIENTES + IA ---
+
+user_state = {}
+
+# 🔹 CALLBACK CENTRAL
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
 
+    # 🆕 NOVO PACIENTE
     if call.data == "novo_paciente":
         msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
         bot.register_next_step_handler(msg, obter_nome_paciente)
 
+    # 🧠 DÚVIDA DIRETA IA
     elif call.data == "duvida_tecnica":
         msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
         bot.register_next_step_handler(msg, processar_ia_direta)
-  
-    elif call.data in ["analisar_laudo", "ler_exame"]:
-       user_state[call.from_user.id] = "aguardando_laudo"
-       bot.send_message(
-        call.message.chat.id,
-        "📷 Envie a imagem ou PDF do laudo para análise."
-        )
 
+    # 📷 ANALISAR LAUDO (CORRIGIDO)
+    elif call.data == "analisar_laudo":
+        user_state[call.from_user.id] = {"tipo": "laudo"}
+        bot.send_message(call.message.chat.id, "📷 Envie a imagem ou PDF do laudo para análise.")
+
+    # 👥 MENU PACIENTES
     elif call.data == "pacientes":
-        bot.send_message(call.message.chat.id, f"DEBUG: {call.data}")
-    
+        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+
+        if not pacientes:
+            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=1)
+
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(
+                f"{p['nome']}",
+                callback_data=f"paciente_{p['nome']}"
+            ))
+
+        bot.send_message(call.message.chat.id, "👥 Selecione o paciente:", reply_markup=markup)
+
+    # 🔹 ABRIR PACIENTE (Evolução diária)
+    elif call.data.startswith("paciente_"):
+        nome = call.data.replace("paciente_", "")
+
+        paciente = pacientes_coll.find_one({
+            "profissional_id": call.from_user.id,
+            "nome": nome
+        })
+
+        if not paciente:
+            bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
+            return
+
+            resumo = paciente.get("evolucao", "Sem evolução registrada.")
+            ultima = paciente.get("ultima_analise", "Sem análise anterior.")
+
+        texto = f"""📂 {nome}
+
+            🧠 Última análise:
+            {ultima[:500]}...
+
+            📈 Evolução:
+            {resumo}
+            """
+
+        user_state[call.from_user.id] = {
+            "tipo": "evolucao",
+            "paciente": nome
+            }
+
+        msg = bot.send_message(call.message.chat.id, texto + "\n\n✍️ Envie a evolução diária:")
+        bot.register_next_step_handler(msg, receber_entrada_usuario)
+
+    # 📂 HISTÓRICO SIMPLES
     elif call.data == "ver_historico":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-      
+
         if not pacientes:
             bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
         else:
-            txt = "📂 **Seus Pacientes:**\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
+            txt = "📂 Pacientes:\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
             bot.send_message(call.message.chat.id, txt)
 
+    # 📊 ADMIN
     elif call.data == "metricas_admin":
 
         if not is_admin(call.from_user.id):
@@ -299,9 +354,8 @@ def callback_query(call):
             f"🧾 Pacientes: {total_pacientes}\n"
             f"🧠 Análises: {total_analises}"
         )
-  
 
-# 🔹 PLANOS / PAGAMENTO
+    # 💳 PAGAMENTO
     elif call.data == "planos":
         try:
             bot.send_invoice(
@@ -320,15 +374,66 @@ def callback_query(call):
                 f"❌ Erro no pagamento:\n{str(e)}"
             )
 
-
-# 🔥 FALLBACK (ANTI-BUG)
+    # 🔥 FALLBACK
     else:
         bot.send_message(
             call.message.chat.id,
             f"⚠️ Comando não reconhecido:\n{call.data}"
-    )
+        )
 
 
+# 🔹 ENTRADA UNIVERSAL (CORAÇÃO DO SISTEMA)
+def receber_entrada_usuario(message):
+    estado = user_state.get(message.from_user.id)
+
+    if not estado:
+        bot.send_message(message.chat.id, "⚠️ Nenhuma ação em andamento.")
+        return
+
+    # 📷 LAUDO
+    if estado["tipo"] == "laudo":
+        processar_laudo(message)
+
+    # 📈 EVOLUÇÃO
+    elif estado["tipo"] == "evolucao":
+        nome = estado["paciente"]
+        salvar_evolucao(message, nome)
+
+
+# 🔹 PROCESSAR LAUDO
+def processar_laudo(message):
+    try:
+        file_info = bot.get_file(message.document.file_id if message.document else message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        texto_extraido = extrair_texto_arquivo(downloaded_file)
+
+        prompt = f"{PROMPT_SISTEMA}\n\nAnalise o seguinte laudo:\n{texto_extraido}"
+
+        chamar_gemini(message, prompt)
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
+
+
+# 🔹 NOVO PACIENTE
+def obter_nome_paciente(message):
+    nome = message.text.upper().strip()
+
+    user_state[message.from_user.id] = {
+        "tipo": "novo_paciente",
+        "paciente": nome
+    }
+
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
+    bot.register_next_step_handler(msg, receber_entrada_usuario)
+
+
+# 🔹 PROCESSAMENTO IA DIRETO
+def processar_ia_direta(message):
+    prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
+    chamar_gemini(message, prompt)
+    
 # --- FLUXO PACIENTE ---
 def obter_nome_paciente(message):
     nome = message.text.upper().strip()

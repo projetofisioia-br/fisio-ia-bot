@@ -225,13 +225,13 @@ def callback_query(call):
         bot.send_message(call.message.chat.id, "📝 Selecione o paciente:", reply_markup=markup)
 
     # 🔹 EDITAR PACIENTE (lista)
-elif call.data == "editar_paciente":
+    elif call.data == "editar_paciente":
 
     pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
 
-    if not pacientes:
+        if not pacientes:
         bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
-        return
+            return
 
     markup = types.InlineKeyboardMarkup(row_width=1)
 
@@ -245,7 +245,7 @@ elif call.data == "editar_paciente":
 
 
 # 🔹 ABRIR PACIENTE
-elif call.data.startswith("editar_"):
+    elif call.data.startswith("editar_"):
     nome = call.data.replace("editar_", "")
 
     paciente = pacientes_coll.find_one({
@@ -253,9 +253,9 @@ elif call.data.startswith("editar_"):
         "nome": nome
     })
 
-    if not paciente:
+        if not paciente:
         bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
-        return
+            return
 
     resumo = paciente.get("evolucao", "Sem evolução registrada ainda.")
     ultima = paciente.get("ultima_analise", "Sem análise prévia.")
@@ -278,13 +278,13 @@ elif call.data.startswith("editar_"):
 
 
 # 🔹 ADICIONAR INFO CLÍNICA (lista)
-elif call.data == "add_info":
+    elif call.data == "add_info":
 
     pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
 
-    if not pacientes:
+        if not pacientes:
         bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
-        return
+            return
 
     markup = types.InlineKeyboardMarkup(row_width=1)
 
@@ -298,7 +298,7 @@ elif call.data == "add_info":
 
 
 # 🔹 INSERIR INFO CLÍNICA
-elif call.data.startswith("addinfo_"):
+    elif call.data.startswith("addinfo_"):
     nome = call.data.replace("addinfo_", "")
 
     msg = bot.send_message(
@@ -310,12 +310,12 @@ elif call.data.startswith("addinfo_"):
 
 
 # 🔹 LISTAR PACIENTES
-elif call.data == "pacientes":
+    elif call.data == "pacientes":
     listar_pacientes(call.message)
 
 
 # 🔹 ANALISAR LAUDO
-elif call.data == "analisar_laudo":
+    elif call.data == "analisar_laudo":
     bot.send_message(
         call.message.chat.id,
         "📷 Envie a imagem ou PDF do laudo para análise."
@@ -323,7 +323,7 @@ elif call.data == "analisar_laudo":
 
 
 # 🔹 PLANOS / PAGAMENTO
-elif call.data == "planos":
+    elif call.data == "planos":
     try:
         bot.send_invoice(
             chat_id=call.message.chat.id,
@@ -343,7 +343,7 @@ elif call.data == "planos":
 
 
 # 🔥 FALLBACK (ANTI-BUG)
-else:
+    else:
     bot.send_message(
         call.message.chat.id,
         f"⚠️ Comando não reconhecido:\n{call.data}"

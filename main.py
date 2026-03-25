@@ -420,7 +420,7 @@ def processar_laudo(message):
 
         chamar_gemini(message, prompt)
 
-        except Exception as e:
+    except Exception as e:
         bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
 
 # 🔹 NOVO PACIENTE

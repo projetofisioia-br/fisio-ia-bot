@@ -180,6 +180,12 @@ def callback_query(call):
     elif call.data == "duvida_tecnica":
         msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
         bot.register_next_step_handler(msg, processar_ia_direta)
+  
+    elif call.data == "ler_exame":
+        bot.send_message(
+        call.message.chat.id,
+        "📷 Envie a imagem ou PDF do laudo para análise."
+        )
 
     elif call.data == "ver_historico":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))

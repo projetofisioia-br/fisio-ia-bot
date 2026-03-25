@@ -191,6 +191,7 @@ def callback_query(call):
 
     elif call.data == "ver_historico":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+      
         if not pacientes:
             bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
         else:

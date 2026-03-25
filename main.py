@@ -201,7 +201,7 @@ def menu_principal():
         types.InlineKeyboardButton("➕ Novo Paciente", callback_data="novo_paciente"),
         types.InlineKeyboardButton("👥 Pacientes", callback_data="pacientes"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
-        types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="Analisar Laudo"),
+        types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos")
     )
     return m
@@ -270,6 +270,9 @@ def callback_query(call):
         "📷 Envie a imagem ou PDF do laudo para análise."
         )
 
+    elif call.data == "pacientes":
+        bot.send_message(call.message.chat.id, f"DEBUG: {call.data}")
+    
     elif call.data == "ver_historico":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
       

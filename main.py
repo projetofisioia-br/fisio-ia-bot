@@ -119,7 +119,7 @@ def menu_principal():
         types.InlineKeyboardButton("➕ Novo Paciente", callback_data="novo_paciente"),
         types.InlineKeyboardButton("👥 Pacientes", callback_data="pacientes"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
-        types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="ler_exame"),
+        types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="Analisar Laudo"),
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos")
     )
     return m
@@ -242,10 +242,12 @@ def callback_query(call):
         markup = types.InlineKeyboardMarkup(row_width=1)
 
         for p in pacientes:
-            markup.add(types.InlineKeyboardButton(
+            markup.add(
+            types.InlineKeyboardButton(
             f"{p['nome']}",
-            callback_data=f"editar_{p['nome']}"
-        ))
+            callback_data=f"addinfo_{p['nome']}"
+            )
+            )
 
         bot.send_message(call.message.chat.id, "📝 Selecione o paciente:", reply_markup=markup)
 

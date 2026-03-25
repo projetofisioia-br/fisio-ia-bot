@@ -224,70 +224,131 @@ def callback_query(call):
 
         bot.send_message(call.message.chat.id, "📝 Selecione o paciente:", reply_markup=markup)
 
-    elif call.data.startswith("editar_"):
-        nome = call.data.replace("editar_", "")
+    # 🔹 EDITAR PACIENTE (lista)
+elif call.data == "editar_paciente":
 
-        paciente = pacientes_coll.find_one({
-            "profissional_id": call.from_user.id,
-            "nome": nome
-        })
+    pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
 
-        resumo = paciente.get("evolucao", "Sem evolução registrada ainda.")
-        ultima = paciente.get("ultima_analise", "Sem análise prévia.")
+    if not pacientes:
+        bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+        return
 
-        texto = f"📂 **{nome}**\n\n🧠 Última análise:\n{ultima[:500]}...\n\n📈 Evolução:\n{resumo}"
+    markup = types.InlineKeyboardMarkup(row_width=1)
 
-        msg = bot.send_message(call.message.chat.id, texto + "\n\n✍️ Envie nova evolução:")
-        bot.register_next_step_handler(msg, salvar_evolucao, nome)
+    for p in pacientes:
+        markup.add(types.InlineKeyboardButton(
+            f"{p['nome']}",
+            callback_data=f"editar_{p['nome']}"
+        ))
 
-    elif call.data == "add_info":
+    bot.send_message(call.message.chat.id, "📝 Selecione o paciente:", reply_markup=markup)
 
-        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
 
-        if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
-            return
+# 🔹 ABRIR PACIENTE
+elif call.data.startswith("editar_"):
+    nome = call.data.replace("editar_", "")
 
-        markup = types.InlineKeyboardMarkup(row_width=1)
+    paciente = pacientes_coll.find_one({
+        "profissional_id": call.from_user.id,
+        "nome": nome
+    })
 
-        for p in pacientes:
-            markup.add(types.InlineKeyboardButton(
-                f"{p['nome']}",
-                callback_data=f"addinfo_{p['nome']}"
-            ))
+    if not paciente:
+        bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
+        return
 
-        bot.send_message(call.message.chat.id, "➕ Selecione o paciente:", reply_markup=markup)
+    resumo = paciente.get("evolucao", "Sem evolução registrada ainda.")
+    ultima = paciente.get("ultima_analise", "Sem análise prévia.")
 
-    elif call.data.startswith("addinfo_"):
-        nome = call.data.replace("addinfo_", "")
+    texto = f"""📂 {nome}
 
-        msg = bot.send_message(
+🧠 Última análise:
+{ultima[:500]}...
+
+📈 Evolução:
+{resumo}
+"""
+
+    msg = bot.send_message(
+        call.message.chat.id,
+        texto + "\n\n✍️ Envie nova evolução:"
+    )
+
+    bot.register_next_step_handler(msg, salvar_evolucao, nome)
+
+
+# 🔹 ADICIONAR INFO CLÍNICA (lista)
+elif call.data == "add_info":
+
+    pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+
+    if not pacientes:
+        bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+
+    for p in pacientes:
+        markup.add(types.InlineKeyboardButton(
+            f"{p['nome']}",
+            callback_data=f"addinfo_{p['nome']}"
+        ))
+
+    bot.send_message(call.message.chat.id, "➕ Selecione o paciente:", reply_markup=markup)
+
+
+# 🔹 INSERIR INFO CLÍNICA
+elif call.data.startswith("addinfo_"):
+    nome = call.data.replace("addinfo_", "")
+
+    msg = bot.send_message(
+        call.message.chat.id,
+        f"🧠 Envie a nova informação clínica para {nome}:"
+    )
+
+    bot.register_next_step_handler(msg, adicionar_info_clinica, nome)
+
+
+# 🔹 LISTAR PACIENTES
+elif call.data == "pacientes":
+    listar_pacientes(call.message)
+
+
+# 🔹 ANALISAR LAUDO
+elif call.data == "analisar_laudo":
+    bot.send_message(
+        call.message.chat.id,
+        "📷 Envie a imagem ou PDF do laudo para análise."
+    )
+
+
+# 🔹 PLANOS / PAGAMENTO
+elif call.data == "planos":
+    try:
+        bot.send_invoice(
+            chat_id=call.message.chat.id,
+            title="MestreFisio PhD Pro 💎",
+            description="Acesso ilimitado às análises.",
+            provider_token=TOKEN_PAYMENT,
+            currency="BRL",
+            prices=[types.LabeledPrice("Assinatura Pro", 5990)],
+            invoice_payload="pro_access",
+            start_parameter="pro_access"
+        )
+    except Exception as e:
+        bot.send_message(
             call.message.chat.id,
-            f"🧠 Envie a nova informação clínica para {nome}:"
+            f"❌ Erro no pagamento:\n{str(e)}"
         )
 
-        bot.register_next_step_handler(msg, adicionar_info_clinica, nome)
 
-    elif call.data == "pacientes":
-        listar_pacientes(call.message)
+# 🔥 FALLBACK (ANTI-BUG)
+else:
+    bot.send_message(
+        call.message.chat.id,
+        f"⚠️ Comando não reconhecido:\n{call.data}"
+)
 
-    elif call.data == "analisar_laudo":
-        bot.send_message(call.message.chat.id, "📷 Envie o laudo para análise.")
-
-    elif call.data == "planos":
-        try:
-            bot.send_invoice(
-                chat_id=call.message.chat.id,
-                title="MestreFisio PhD Pro 💎",
-                description="Acesso ilimitado às análises.",
-                provider_token=TOKEN_PAYMENT,
-                currency="BRL",
-                prices=[types.LabeledPrice("Assinatura Pro", 5990)],
-                invoice_payload="pro_access",
-                start_parameter="pro_access"
-            )
-        except Exception as e:
-            bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
 
 # --- FLUXO PACIENTE ---
 def obter_nome_paciente(message):

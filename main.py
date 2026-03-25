@@ -403,18 +403,25 @@ def receber_entrada_usuario(message):
 # 🔹 PROCESSAR LAUDO
 def processar_laudo(message):
     try:
-        file_info = bot.get_file(message.document.file_id if message.document else message.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
+        file_info = bot.get_file(
+            message.document.file_id if message.document else message.photo[-1].file_id
+        )
 
-        texto_extraido = extrair_texto_arquivo(downloaded_file)
+        file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
 
-        prompt = f"{PROMPT_SISTEMA}\n\nAnalise o seguinte laudo:\n{texto_extraido}"
+        prompt = f"""
+        {PROMPT_SISTEMA}
+
+        Analise o laudo médico disponível neste arquivo:
+        {file_url}
+
+        Descreva achados clínicos, possíveis diagnósticos e implicações fisioterapêuticas.
+        """
 
         chamar_gemini(message, prompt)
 
-    except Exception as e:
+        except Exception as e:
         bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
-
 
 # 🔹 NOVO PACIENTE
 def obter_nome_paciente(message):

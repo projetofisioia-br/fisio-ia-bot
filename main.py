@@ -569,36 +569,39 @@ from reportlab.lib.styles import getSampleStyleSheet
 # =========================
 
 # --- GERAR PDF ---
-def gerar_pdf(texto, nome_paciente="Paciente", tipo="Laudo"):
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib.pagesizes import A4
-
-    nome_arquivo = f"{tipo}_{nome_paciente}.pdf".replace(" ", "_")
-
-    doc = SimpleDocTemplate(nome_arquivo, pagesize=A4)
+def gerar_pdf(nome_paciente, 
+texto_analise):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
-    conteudo = []
+    
+    # Estilo customizado para o corpo do texto
+    style_corpo = ParagraphStyle(
+        'Justify',
+        parent=styles['Normal'],
+        alignment=1, # 1 = Justificado
+        fontSize=11,
+        leading=14
+    )
+    
+    elementos = []
+    # Cabeçalho do Laudo
+elementos.append(Paragraph(f"<b>MESTREFISIO PhD - RESUMO CLÍNICO</b>", styles['Title']))
+    elementos.append(Spacer(1, 12))
+elementos.append(Paragraph(f"<b>PACIENTE:</b> {nome_paciente.upper()}", styles['Normal']))
+    elementos.append(Paragraph(f"<b>DATA DA EMISSÃO:</b> {time.strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
+    elementos.append(Spacer(1, 20))
+    
+    # Conteúdo da Análise
+    for linha in texto_analise.split('\n'):
+        if linha.strip():
+elementos.append(Paragraph(linha, style_corpo))
+            elementos.append(Spacer(1, 8))
+            
+    doc.build(elementos)
+    buffer.seek(0)
+    return buffer
 
-    # 🔥 TÍTULO
-    conteudo.append(Paragraph(f"<b>{tipo.upper()}</b>", styles["Title"]))
-    conteudo.append(Spacer(1, 20))
-
-    # 🔥 TEXTO FORMATADO
-    for linha in texto.split("\n"):
-        if linha.strip() == "":
-            continue
-
-        # Destaque para títulos
-        if linha.startswith("#") or linha.endswith(":"):
-            conteudo.append(Paragraph(f"<b>{linha}</b>", styles["Heading3"]))
-        else:
-            conteudo.append(Paragraph(linha, styles["Normal"]))
-
-        conteudo.append(Spacer(1, 10))
-
-    doc.build(conteudo)
-    return nome_arquivo
 
 
 # --- COMANDO /laUDO ---

@@ -469,10 +469,10 @@ def obter_nome_paciente(message):
         message.chat.id,
         f"✅ Paciente: {nome}\nDescreva o quadro clínico:"
     )
-    def processar_laudo(message):
+def processar_laudo(message):
     try:
         file_info = bot.get_file(
-            message.document.file_id if message.document else message.photo[-1].file_id
+         message.document.file_id if message.document else message.photo[-1].file_id
         )
 
         downloaded_file = bot.download_file(file_info.file_path)

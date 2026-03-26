@@ -9,10 +9,13 @@ from pymongo import MongoClient
 
 # --- SERVIDOR WEB ---
 app = Flask('')
-@app.route('/')
-def home(): return "MestreFisio V5.0 - Memória Clínica Inteligente Ativa 🧠"
 
-def run(): app.run(host='0.0.0.0', port=10000)
+@app.route('/')
+def home():
+    return "MestreFisio V5.0 - Memória Clínica Inteligente Ativa 🧠"
+
+def run():
+    app.run(host='0.0.0.0', port=10000)
 
 # --- CONFIGURAÇÕES ---
 TOKEN_TELEGRAM = os.environ.get("TOKEN_TELEGRAM", "").strip()
@@ -22,14 +25,21 @@ MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 
 # --- ADMIN ---
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0") or 0)
 
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
+# 🔥 PROTEÇÃO: evita crash se TOKEN vazio
+if not TOKEN_TELEGRAM:
+    raise ValueError("TOKEN_TELEGRAM não definido nas variáveis de ambiente")
+
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 
 # --- BANCO ---
+if not MONGO_URI:
+    raise ValueError("MONGO_URI não definido")
+
 client = MongoClient(MONGO_URI)
 db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
@@ -47,11 +57,14 @@ def montar_memoria_clinica(paciente):
 
     if paciente.get("registros_clinicos"):
         memoria += "\nRegistros adicionais:\n"
-        for r in paciente["registros_clinicos"][-5:]:
-            memoria += f"- ({r['data']}) {r['info']}\n"
+        for r in paciente.get("registros_clinicos", [])[-5:]:
+            data = r.get("data", "")
+            info = r.get("info", "")
+            memoria += f"- ({data}) {info}\n"
 
     return memoria.strip()
 
+# --- OCR ---
 def extrair_texto_arquivo(file_bytes):
     try:
         imagem = Image.open(io.BytesIO(file_bytes))
@@ -64,7 +77,7 @@ def extrair_texto_arquivo(file_bytes):
 # --- CONTROLE DE USO ---
 LIMITE_GRATUITO = 5
 
-# 🔥 NOVO: registrar usuário + alerta admin
+# 🔥 REGISTRO DE USUÁRIO
 def registrar_usuario_se_novo(user_id):
 
     user = uso_coll.find_one({"user_id": user_id})
@@ -82,37 +95,42 @@ def registrar_usuario_se_novo(user_id):
                     ADMIN_ID,
                     f"🚀 Novo usuário:\nID: {user_id}"
                 )
-            except:
+            except Exception:
                 pass
 
+# 🔥 CONTROLE DE USO (VERSÃO ESTÁVEL)
 def pode_usar(user_id):
     if is_admin(user_id):
         return True
 
     user = uso_coll.find_one({"user_id": user_id})
 
+    # 🔹 usuário novo
     if not user:
         uso_coll.insert_one({"user_id": user_id, "uso": 1})
         return True
 
-    if user["uso"] >= LIMITE_GRATUITO:
+    uso_atual = user.get("uso", 0)
+
+    # 🔹 limite atingido
+    if uso_atual >= LIMITE_GRATUITO:
         return False
 
-    novo_uso = user["uso"] + 1
+    novo_uso = uso_atual + 1
 
     uso_coll.update_one(
         {"user_id": user_id},
         {"$set": {"uso": novo_uso}}
     )
 
-    # 🔥 ALERTA ADMIN
-    if novo_uso >= LIMITE_GRATUITO:
+    # 🔥 alerta admin
+    if novo_uso >= LIMITE_GRATUITO and ADMIN_ID:
         try:
             bot.send_message(
                 ADMIN_ID,
                 f"⚠️ Usuário atingiu limite:\nID: {user_id}\nUso: {novo_uso}"
             )
-        except:
+        except Exception:
             pass
 
     return True
@@ -206,9 +224,9 @@ Pensar como clínico experiente, responder como especialista e professor, estrut
 """
 
 # --- MENU ---
-
 def menu_principal():
     m = types.InlineKeyboardMarkup(row_width=1)
+
     m.add(
         types.InlineKeyboardButton("➕ Novo Paciente", callback_data="novo_paciente"),
         types.InlineKeyboardButton("👥 Pacientes", callback_data="pacientes"),
@@ -216,14 +234,15 @@ def menu_principal():
         types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos")
     )
-    return m
-    
-    # 🔥 BOTÃO ADMIN
-    markup.add(
-        types.InlineKeyboardButton("📊 Métricas (Admin)", callback_data="metricas_admin")
-    )
 
-    return markup
+    # 🔥 BOTÃO ADMIN (corrigido)
+    if ADMIN_ID:
+        m.add(
+            types.InlineKeyboardButton("📊 Métricas (Admin)", callback_data="metricas_admin")
+        )
+
+    return m
+
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -232,14 +251,18 @@ def send_welcome(message):
         "🚀 **MestreFisio V5.0 Especialista**\nAgora com memória clínica inteligente.",
         reply_markup=menu_principal()
     )
-
+    
 # =========================
 # 🧾 COMANDO DE LAUDOS
 # =========================
 
 @bot.message_handler(commands=['laudo'])
 def iniciar_laudo(message):
-    menu_laudos(message.chat.id)
+    bot.send_message(
+        message.chat.id,
+        "🧾 Escolha o tipo de laudo:\n\n"
+        "🧾 Laudo clínico\n🏋️ Exercícios\n📉 Evolução\n🛌 Atestado\n⚡ Tratamento\n📊 Convênio\n🧠 Biomecânica"
+    )
 
 
 @bot.message_handler(func=lambda message: message.text in [
@@ -262,9 +285,7 @@ def selecionar_tipo_laudo(message):
 
     bot.register_next_step_handler(msg, gerar_laudo, tipo)
 
-# --- CALLBACK ---
-# --- SISTEMA UNIFICADO PACIENTES + IA ---
-
+# --- ESTADO GLOBAL ---
 user_state = {}
 
 # 🔹 CALLBACK CENTRAL
@@ -282,7 +303,7 @@ def callback_query(call):
         msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
         bot.register_next_step_handler(msg, processar_ia_direta)
 
-    # 📷 ANALISAR LAUDO (CORRIGIDO)
+    # 📷 ANALISAR LAUDO
     elif call.data == "analisar_laudo":
         user_state[call.from_user.id] = {"tipo": "laudo"}
         bot.send_message(call.message.chat.id, "📷 Envie a imagem ou PDF do laudo para análise.")
@@ -305,7 +326,7 @@ def callback_query(call):
 
         bot.send_message(call.message.chat.id, "👥 Selecione o paciente:", reply_markup=markup)
 
-    # 🔹 ABRIR PACIENTE (Evolução diária)
+    # 🔹 SUBMENU DO PACIENTE (🔥 CORREÇÃO PRINCIPAL)
     elif call.data.startswith("paciente_"):
         nome = call.data.replace("paciente_", "")
 
@@ -318,34 +339,55 @@ def callback_query(call):
             bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
             return
 
-        resumo = paciente.get("evolucao", "Sem evolução registrada.")
         ultima = paciente.get("ultima_analise", "Sem análise anterior.")
 
         texto = f"""📂 {nome}
 
-            🧠 Última análise:
-            {ultima[:500]}...
+🧠 Última análise:
+{ultima[:500]}...
+"""
 
-            📈 Evolução:
-            {resumo}
-            """
-
+        # 🔥 estado agora NÃO inicia evolução direto
         user_state[call.from_user.id] = {
-            "tipo": "evolucao",
             "paciente": nome
-            }
+        }
 
-        msg = bot.send_message(call.message.chat.id, texto + "\n\n✍️ Envie a evolução diária:")
-        bot.register_next_step_handler(msg, receber_entrada_usuario)
+        # 🔥 SUBMENU CORRETO
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("📈 Evolução diária", callback_data="evolucao_diaria"),
+            types.InlineKeyboardButton("🧠 Nova análise", callback_data="nova_analise"),
+            types.InlineKeyboardButton("📄 Gerar Laudo PDF", callback_data="gerar_pdf")
+        )
 
-    # 📂 HISTÓRICO SIMPLES
+        bot.send_message(call.message.chat.id, texto, reply_markup=markup)
+
+    # 📈 EVOLUÇÃO DIÁRIA
+    elif call.data == "evolucao_diaria":
+        msg = bot.send_message(call.message.chat.id, "✍️ Envie a evolução do dia:")
+        bot.register_next_step_handler(msg, receber_evolucao)
+
+    # 🧠 NOVA ANÁLISE (RESUMIDA 🔥)
+    elif call.data == "nova_analise":
+        user_state[call.from_user.id]["tipo"] = "analise_resumida"
+
+        msg = bot.send_message(call.message.chat.id, "🔎 Gerando análise resumida do caso...")
+        processar_analise_resumida(call.message)
+
+    # 📄 PDF
+    elif call.data == "gerar_pdf":
+        gerar_pdf_paciente(call.message)
+
+    # 📂 HISTÓRICO
     elif call.data == "ver_historico":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
 
         if not pacientes:
             bot.send_message(call.message.chat.id, "📭 Histórico vazio.")
         else:
-            txt = "📂 Pacientes:\n" + "\n".join([f"• {p['nome']} ({p['data']})" for p in pacientes])
+            txt = "📂 Pacientes:\n" + "\n".join(
+                [f"• {p['nome']} ({p.get('data','')})" for p in pacientes]
+            )
             bot.send_message(call.message.chat.id, txt)
 
     # 📊 ADMIN
@@ -392,8 +434,7 @@ def callback_query(call):
             call.message.chat.id,
             f"⚠️ Comando não reconhecido:\n{call.data}"
         )
-
-
+        
 # 🔹 ENTRADA UNIVERSAL (CORAÇÃO DO SISTEMA)
 def receber_entrada_usuario(message):
     estado = user_state.get(message.from_user.id)

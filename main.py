@@ -375,8 +375,21 @@ def callback_query(call):
         processar_analise_resumida(call.message)
 
     # 📄 PDF
-    elif call.data == "gerar_pdf":
-        gerar_pdf_paciente(call.message)
+        elif call.data.startswith("pdf_"):
+            nome = call.data.split("_")[1]
+            paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
+        
+            if paciente and paciente.get("ultima_analise"):
+                bot.send_message(call.message.chat.id, f"⏳ Gerando PDF de resumo para {nome}...")
+                pdf_buffer = gerar_pdf(nome, paciente["ultima_analise"])
+                bot.send_document(
+                call.message.chat.id, 
+                pdf_buffer, 
+                visible_file_name=f"Resumo_Clinico_{nome}.pdf"
+                )
+            else:
+                bot.send_message(call.message.chat.id, "❌ Não encontrei uma análise salva para gerar o resumo.")
+            
 
     # 📂 HISTÓRICO
     elif call.data == "ver_historico":
@@ -505,6 +518,7 @@ def processar_ia_direta(message):
     chamar_gemini(message, prompt)
 
 @bot.message_handler(content_types=['photo', 'document'])
+
 def receber_arquivo(message):
 
     estado = user_state.get(message.from_user.id)
@@ -528,29 +542,26 @@ def obter_nome_paciente_fluxo(message):
     bot.register_next_step_handler(msg, processar_ia_paciente, nome)
 
 def processar_ia_paciente(message, nome):
-
-    paciente = pacientes_coll.find_one({
-        "profissional_id": message.from_user.id,
-        "nome": nome
-    }) or {}
-
+    paciente = pacientes_coll.find_one({"profissional_id": message.from_user.id, "nome": nome}) or {}
     memoria = montar_memoria_clinica(paciente)
-
+    
+    # Prompt focado em RESUMO e PRÓXIMAS CONDUTAS
     prompt = f"""
-{PROMPT_SISTEMA}
+    Atue como Fisioterapeuta PhD. 
+    PACIENTE: {nome}
+    HISTÓRICO PRÉVIO: {memoria}
+    DADO ATUAL: {message.text}
 
-Paciente: {nome}
-
-Histórico clínico:
-{memoria}
-
-Nova informação:
-{message.text}
-
-Atualize o raciocínio considerando toda evolução.
-"""
-
+    Sua tarefa é fornecer uma NOVA ANÁLISE RESUMIDA:
+    1. RESUMO DO CASO: (Máximo 5 linhas sobre o estado atual).
+    2. EVOLUÇÃO: (O que melhorou ou piorou comparado ao histórico).
+    3. SUGESTÕES DE PRÓXIMAS CONDUTAS: (Liste 3 condutas práticas e imediatas).
+    
+    Seja direto, técnico e evite repetições desnecessárias.
+    """
     chamar_gemini(message, prompt, nome)
+
+
 
 def processar_ia_direta(message):
     prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
@@ -823,36 +834,25 @@ def pode_usar(user_id):
 
 
 # --- EVOLUÇÃO DIÁRIA + IA (INTEGRADA AO SUBMENU) ---
-def salvar_evolucao(message):
-
-    estado = user_state.get(message.from_user.id)
-    nome = estado.get("paciente")
-
+def salvar_evolucao(message, nome):
     nova_info = message.text
-
-    # 🔹 salva estruturado
+    data_hora = time.strftime('%d/%m/%Y %H:%M')
+    
+    # Agrega a informação com data e hora no banco
     pacientes_coll.update_one(
-        {
-            "profissional_id": message.from_user.id,
-            "nome": nome
-        },
-        {
-            "$push": {
-                "registros_clinicos": {
-                    "data": time.strftime("%d/%m/%Y"),
-                    "info": nova_info
-                }
-            }
-        },
+        {"profissional_id": message.from_user.id, "nome": nome},
+        {"$push": {"historico_evolucao": {"data": data_hora, "nota": nova_info}}},
         upsert=True
     )
-
-    paciente = pacientes_coll.find_one({
-        "profissional_id": message.from_user.id,
-        "nome": nome
-    }) or {}
-
-    memoria = montar_memoria_clinica(paciente)
+    
+    bot.send_message(
+        message.chat.id, 
+        f"✅ **Evolução diária recebida e agregada às informações anteriores.**\n🕒 Registro: {data_hora}"
+    )
+    
+    # Opcional: Chama a nova análise resumida logo após evoluir
+    msg = bot.send_message(message.chat.id, "🔍 Deseja gerar uma **Nova Análise** resumida agora? (Responda com 'Sim' ou use o menu)")
+    
 
     prompt = f"""
 {PROMPT_SISTEMA}

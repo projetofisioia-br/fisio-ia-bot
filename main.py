@@ -362,34 +362,40 @@ def callback_query(call):
 
         bot.send_message(call.message.chat.id, texto, reply_markup=markup)
 
-    # 📈 EVOLUÇÃO DIÁRIA
+        # ✍️ EVOLUÇÃO DIÁRIA
     elif call.data == "evolucao_diaria":
         msg = bot.send_message(call.message.chat.id, "✍️ Envie a evolução do dia:")
         bot.register_next_step_handler(msg, receber_evolucao)
 
-    # 🧠 NOVA ANÁLISE (RESUMIDA 🔥)
+# 🧠 ANÁLISE RESUMIDA
     elif call.data == "nova_analise":
         user_state[call.from_user.id]["tipo"] = "analise_resumida"
 
-        msg = bot.send_message(call.message.chat.id, "🔎 Gerando análise resumida do caso...")
-        processar_analise_resumida(call.message)
+        bot.send_message(call.message.chat.id, "🔎 Gerando análise resumida do caso...")
 
-    # 📄 PDF
-        elif call.data.startswith("pdf_"):
-            nome = call.data.split("_")[1]
-            paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
-        
-            if paciente and paciente.get("ultima_analise"):
-                bot.send_message(call.message.chat.id, f"⏳ Gerando PDF de resumo para {nome}...")
-                pdf_buffer = gerar_pdf(nome, paciente["ultima_analise"])
-                bot.send_document(
-                call.message.chat.id, 
-                pdf_buffer, 
-                visible_file_name=f"Resumo_Clinico_{nome}.pdf"
-                )
-            else:
-                bot.send_message(call.message.chat.id, "❌ Não encontrei uma análise salva para gerar o resumo.")
-            
+        processar_ia_direta(call.message)  # 🔥 substituído
+
+# 📄 GERAR PDF
+    elif call.data.startswith("pdf_"):
+        nome = call.data.split("_")[1]
+
+        paciente = pacientes_coll.find_one({
+        "profissional_id": call.from_user.id,
+        "nome": nome
+        })
+
+        if paciente and paciente.get("ultima_analise"):
+            bot.send_message(call.message.chat.id, f"⏳ Gerando PDF de resumo para {nome}...")
+
+            pdf_buffer = gerar_pdf(nome, paciente["ultima_analise"])
+
+            bot.send_document(
+            call.message.chat.id,
+            pdf_buffer,
+            visible_file_name=f"Resumo_Clinico_{nome}.pdf"
+            )
+        else:
+            bot.send_message(call.message.chat.id, "❌ Não encontrei uma análise salva para gerar o resumo.")
 
     # 📂 HISTÓRICO
     elif call.data == "ver_historico":

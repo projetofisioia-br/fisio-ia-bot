@@ -5,3 +5,5 @@ pymongo
 dnspython
 fpdf
 reportlab
+pytesseract
+Pillow

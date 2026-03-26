@@ -413,7 +413,18 @@ def receber_entrada_usuario(message):
 
 
 # 🔹 PROCESSAR LAUDO
-def processar_laudo(message):
+
+
+# 🔹 NOVO PACIENTE
+def obter_nome_paciente(message):
+    nome = message.text.upper().strip()
+
+    user_state[message.from_user.id] = {
+        "tipo": "novo_paciente",
+        "paciente": nome
+    }
+
+    msg = bot.send_message(message.chat.id, f"✅ Paciedef processar_laudo(message):
     try:
         file_info = bot.get_file(
             message.document.file_id if message.document else message.photo[-1].file_id
@@ -426,35 +437,21 @@ def processar_laudo(message):
         texto_extraido = extrair_texto_arquivo(downloaded_file)
 
         if not texto_extraido:
-         bot.send_message(message.chat.id, "❌ Não foi possível ler o laudo.")
+            bot.send_message(message.chat.id, "❌ Não foi possível ler o laudo.")
             return
 
-    prompt = f"""
+        prompt = f"""
 {PROMPT_SISTEMA}
 
-   Analise o seguinte laudo médico:
+Analise o seguinte laudo médico:
 
-        {texto_extraido}
-        """
+{texto_extraido}
+"""
 
         chamar_gemini(message, prompt)
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
-
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
-
-# 🔹 NOVO PACIENTE
-def obter_nome_paciente(message):
-    nome = message.text.upper().strip()
-
-    user_state[message.from_user.id] = {
-        "tipo": "novo_paciente",
-        "paciente": nome
-    }
-
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
+        bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")nte: {nome}\nDescreva o quadro clínico:")
     bot.register_next_step_handler(msg, receber_entrada_usuario)
 
 

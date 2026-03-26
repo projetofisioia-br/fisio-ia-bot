@@ -427,7 +427,7 @@ def processar_laudo(message):
 
         if not texto_extraido:
          bot.send_message(message.chat.id, "❌ Não foi possível ler o laudo.")
-        return
+            return
 
     prompt = f"""
 {PROMPT_SISTEMA}

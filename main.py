@@ -613,7 +613,7 @@ elementos.append(Spacer(1, 20))
 for linha in texto_analise.split('\n'):
     if linha.strip():
         elementos.append(Paragraph(linha, style_corpo))
-            elementos.append(Spacer(1, 8))
+        elementos.append(Spacer(1, 8))
             
         doc.build(elementos)
         buffer.seek(0)

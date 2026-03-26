@@ -603,11 +603,11 @@ texto_analise):
     
     elementos = []
     # Cabeçalho do Laudo
-elementos.append(Paragraph(f"<b>MESTREFISIO PhD - RESUMO CLÍNICO</b>", styles['Title']))
-elementos.append(Spacer(1, 12))
-elementos.append(Paragraph(f"<b>PACIENTE:</b> {nome_paciente.upper()}", styles['Normal']))
-elementos.append(Paragraph(f"<b>DATA DA EMISSÃO:</b> {time.strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
-elementos.append(Spacer(1, 20))
+    elementos.append(Paragraph(f"<b>MESTREFISIO PhD - RESUMO CLÍNICO</b>", styles['Title']))
+    elementos.append(Spacer(1, 12))
+    elementos.append(Paragraph(f"<b>PACIENTE:</b> {nome_paciente.upper()}", styles['Normal']))
+    elementos.append(Paragraph(f"<b>DATA DA EMISSÃO:</b> {time.strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
+    elementos.append(Spacer(1, 20))
     
     # Conteúdo da Análise
 for linha in texto_analise.split('\n'):

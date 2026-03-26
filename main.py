@@ -465,7 +465,9 @@ def obter_nome_paciente(message):
         "paciente": nome
     }
 
-    msg = bot.send_message(message.chat.id, f"✅ Paciedef processar_laudo(message):
+    msg = bot.send_message(
+        message.chat.id,
+        f"✅ Paciedef processar_laudo(message):
     try:
         file_info = bot.get_file(
             message.document.file_id if message.document else message.photo[-1].file_id

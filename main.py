@@ -1,3 +1,6 @@
+import pytesseract
+from PIL import Image
+import io
 import telebot, requests, os, time
 from telebot import types
 from flask import Flask
@@ -48,6 +51,15 @@ def montar_memoria_clinica(paciente):
             memoria += f"- ({r['data']}) {r['info']}\n"
 
     return memoria.strip()
+
+def extrair_texto_arquivo(file_bytes):
+    try:
+        imagem = Image.open(io.BytesIO(file_bytes))
+        texto = pytesseract.image_to_string(imagem, lang='por')
+        return texto.strip()
+
+    except Exception as e:
+        return f"Erro OCR: {str(e)}"
 
 # --- CONTROLE DE USO ---
 LIMITE_GRATUITO = 5
@@ -407,18 +419,28 @@ def processar_laudo(message):
             message.document.file_id if message.document else message.photo[-1].file_id
         )
 
-        file_url = f"https://api.telegram.org/file/bot{TOKEN_TELEGRAM}/{file_info.file_path}"
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        bot.send_message(message.chat.id, "🧠 Extraindo texto do laudo...")
+
+        texto_extraido = extrair_texto_arquivo(downloaded_file)
+
+    if not texto_extraido:
+         bot.send_message(message.chat.id, "❌ Não foi possível ler o laudo.")
+        return
 
         prompt = f"""
         {PROMPT_SISTEMA}
 
-        Analise o laudo médico disponível neste arquivo:
-        {file_url}
+        Analise o seguinte laudo médico:
 
-        Descreva achados clínicos, possíveis diagnósticos e implicações fisioterapêuticas.
+        {texto_extraido}
         """
 
         chamar_gemini(message, prompt)
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
 
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")

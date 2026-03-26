@@ -425,14 +425,14 @@ def processar_laudo(message):
 
         texto_extraido = extrair_texto_arquivo(downloaded_file)
 
-    if not texto_extraido:
+        if not texto_extraido:
          bot.send_message(message.chat.id, "❌ Não foi possível ler o laudo.")
         return
 
-        prompt = f"""
-        {PROMPT_SISTEMA}
+    prompt = f"""
+{PROMPT_SISTEMA}
 
-        Analise o seguinte laudo médico:
+   Analise o seguinte laudo médico:
 
         {texto_extraido}
         """

@@ -744,21 +744,19 @@ def process_pre_checkout_query(pre_checkout_query):
     except Exception as e:
         print("Erro no pre_checkout:", e)
 
-
 # --- PAGAMENTO APROVADO ---
 @bot.message_handler(content_types=['successful_payment'])
 def pagamento_sucesso(message):
 
     user_id = message.from_user.id
 
-    # 🔥 libera PRO por 30 dias
     uso_coll.update_one(
         {"user_id": user_id},
         {
             "$set": {
                 "uso": 0,
                 "pro": True,
-                "pro_expira_em": time.time() + (30 * 24 * 60 * 60)  # 30 dias
+                "pro_expira_em": time.time() + (30 * 24 * 60 * 60)
             }
         },
         upsert=True
@@ -770,11 +768,10 @@ def pagamento_sucesso(message):
     )
 
 
-# --- VERIFICAÇÃO DE EXPIRAÇÃO ---
+# --- VERIFICAÇÃO DE ASSINATURA ---
 def verificar_assinatura(user):
 
     if user.get("pro"):
-
         expira = user.get("pro_expira_em", 0)
 
         if time.time() > expira:
@@ -789,21 +786,7 @@ def verificar_assinatura(user):
     return False
 
 
-# --- RENOVAÇÃO AUTOMÁTICA (simples) ---
-def renovar_plano(user_id):
-
-    uso_coll.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {
-                "pro": True,
-                "pro_expira_em": time.time() + (30 * 24 * 60 * 60)
-            }
-        }
-    )
-
-
-# --- ALTERAÇÃO NA FUNÇÃO DE USO ---
+# --- CONTROLE DE USO (VERSÃO FINAL UNIFICADA) ---
 def pode_usar(user_id):
 
     if is_admin(user_id):
@@ -815,11 +798,13 @@ def pode_usar(user_id):
         uso_coll.insert_one({"user_id": user_id, "uso": 1})
         return True
 
-    # 🔥 VERIFICA ASSINATURA
+    # 🔥 PRO ATIVO
     if verificar_assinatura(user):
         return True
 
-    if user["uso"] >= LIMITE_GRATUITO:
+    uso_atual = user.get("uso", 0)
+
+    if uso_atual >= LIMITE_GRATUITO:
         return False
 
     uso_coll.update_one(
@@ -828,30 +813,39 @@ def pode_usar(user_id):
     )
 
     return True
-# --- ATUALIZAÇÃO DE PRONTUÁRIO COM IA ---
-def salvar_evolucao(message, nome):
+
+
+# --- EVOLUÇÃO DIÁRIA + IA (INTEGRADA AO SUBMENU) ---
+def salvar_evolucao(message):
+
+    estado = user_state.get(message.from_user.id)
+    nome = estado.get("paciente")
 
     nova_info = message.text
+
+    # 🔹 salva estruturado
+    pacientes_coll.update_one(
+        {
+            "profissional_id": message.from_user.id,
+            "nome": nome
+        },
+        {
+            "$push": {
+                "registros_clinicos": {
+                    "data": time.strftime("%d/%m/%Y"),
+                    "info": nova_info
+                }
+            }
+        },
+        upsert=True
+    )
 
     paciente = pacientes_coll.find_one({
         "profissional_id": message.from_user.id,
         "nome": nome
     }) or {}
 
-    evolucao_antiga = paciente.get("evolucao", "")
-
-    nova_evolucao = evolucao_antiga + f"\n\n[{time.strftime('%d/%m/%Y')}]\n{nova_info}"
-
-    pacientes_coll.update_one(
-        {"profissional_id": message.from_user.id, "nome": nome},
-        {"$set": {"evolucao": nova_evolucao}},
-        upsert=True
-    )
-
-    memoria = montar_memoria_clinica({
-        **paciente,
-        "evolucao": nova_evolucao
-    })
+    memoria = montar_memoria_clinica(paciente)
 
     prompt = f"""
 {PROMPT_SISTEMA}
@@ -861,21 +855,23 @@ Paciente: {nome}
 Histórico clínico completo:
 {memoria}
 
-Nova evolução:
+Nova evolução do dia:
 {nova_info}
 
 Realize:
-1. Análise pós evolução
-2. Interpretação da progressão clínica
-3. Ajustes no raciocínio fisioterapêutico
-4. Próximas condutas recomendadas
+1. Interpretação da evolução
+2. Progressão clínica
+3. Ajuste de conduta
+4. Próximos passos
 5. Prognóstico
 """
+
+    user_state.pop(message.from_user.id, None)
 
     chamar_gemini(message, prompt, nome)
 
 
-# --- ADICIONAR INFORMAÇÃO CLÍNICA COM IA ---
+# --- ADICIONAR INFO CLÍNICA ---
 def adicionar_info_clinica(message, nome):
 
     nova_info = message.text
@@ -912,14 +908,15 @@ Nova informação clínica:
 {nova_info}
 
 Realize:
-1. Interpretação clínica da nova informação
-2. Impacto no quadro geral
-3. Ajuste do raciocínio clínico
-4. Conduta fisioterapêutica recomendada
-5. Prognóstico atualizado
+1. Interpretação clínica
+2. Impacto no quadro
+3. Ajuste de raciocínio
+4. Conduta recomendada
+5. Prognóstico
 """
 
     chamar_gemini(message, prompt, nome)
+
 
 # --- IA ---
 def chamar_gemini(message, prompt, nome_paciente=None):
@@ -929,7 +926,7 @@ def chamar_gemini(message, prompt, nome_paciente=None):
 
         if not pode_usar(message.from_user.id):
             bot.send_message(message.chat.id, "🚫 Limite atingido.")
-            return
+            return None
 
     aguarde = bot.send_message(message.chat.id, "🧠 Processando...")
 
@@ -942,17 +939,23 @@ def chamar_gemini(message, prompt, nome_paciente=None):
             timeout=400
         )
 
+        if response.status_code != 200:
+            bot.delete_message(message.chat.id, aguarde.message_id)
+            bot.send_message(message.chat.id, "❌ Erro na API da IA.")
+            print(response.text)
+            return None
+
         res_data = response.json()
 
         try:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
-        except:
+        except Exception:
             bot.delete_message(message.chat.id, aguarde.message_id)
             bot.send_message(message.chat.id, "⚠️ Erro ao interpretar resposta da IA.")
             print(res_data)
-            return
+            return None
 
-        # ✅ ESTE BLOCO PRECISA ESTAR DENTRO DO TRY
+        # 🔥 salva no paciente
         if nome_paciente:
             pacientes_coll.update_one(
                 {
@@ -970,6 +973,7 @@ def chamar_gemini(message, prompt, nome_paciente=None):
 
         bot.delete_message(message.chat.id, aguarde.message_id)
 
+        # 🔹 quebra mensagens grandes
         for p in [analise[i:i+1500] for i in range(0, len(analise), 1500)]:
             bot.send_message(message.chat.id, p)
             time.sleep(1)
@@ -985,6 +989,8 @@ def chamar_gemini(message, prompt, nome_paciente=None):
     except Exception as e:
         print(e)
         bot.send_message(message.chat.id, "❌ Erro na IA.")
+        return None
+
 
 # --- EXECUÇÃO ---
 if __name__ == "__main__":

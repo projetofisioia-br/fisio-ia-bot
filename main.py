@@ -617,6 +617,7 @@ for linha in texto_analise.split('\n'):
             
     doc.build(elementos)
     buffer.seek(0)
+  
     return buffer
 
 

@@ -615,9 +615,9 @@ for linha in texto_analise.split('\n'):
             elementos.append(Paragraph(linha, style_corpo))
             elementos.append(Spacer(1, 8))
             
-    doc.build(elementos)
-    buffer.seek(0)
-    return buffer
+        doc.build(elementos)
+        buffer.seek(0)
+        return buffer
 
 
 

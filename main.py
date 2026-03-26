@@ -610,14 +610,14 @@ elementos.append(Paragraph(f"<b>DATA DA EMISSÃO:</b> {time.strftime('%d/%m/%Y %
 elementos.append(Spacer(1, 20))
     
     # Conteúdo da Análise
-for linha in texto_analise.split('\n'):
-    if linha.strip():
-        elementos.append(Paragraph(linha, style_corpo))
-        elementos.append(Spacer(1, 8))
+    for linha in texto_analise.split('\n'):
+        if linha.strip():
+            elementos.append(Paragraph(linha, style_corpo))
+            elementos.append(Spacer(1, 8))
             
-doc.build(elementos)
-buffer.seek(0)
-return buffer
+    doc.build(elementos)
+    buffer.seek(0)
+    return buffer
 
 
 

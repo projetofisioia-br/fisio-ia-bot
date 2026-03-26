@@ -451,8 +451,7 @@ Analise o seguinte laudo médico:
         chamar_gemini(message, prompt)
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")nte: {nome}\nDescreva o quadro clínico:")
-    bot.register_next_step_handler(msg, receber_entrada_usuario)
+        bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
 
 
 # 🔹 PROCESSAMENTO IA DIRETO

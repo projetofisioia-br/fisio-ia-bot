@@ -607,8 +607,7 @@ def cmd_laudo(message):
 @bot.message_handler(commands=['dashboard'])
 def dashboard_link(message):
     user_id = message.from_user.id
-    # Substitua pelo domínio real do seu deploy
-    dominio = https://fisio-ia-bot-1.onrender.com # ⚠️ ALTERE PARA O DOMÍNIO REAL
+    dominio = https://fisio-ia-bot-1.onrender.com 
     link_prof = f"{dominio}/profissional?user_id={user_id}"
     bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link_prof}")
     if is_admin(user_id):

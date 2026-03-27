@@ -1,3 +1,4 @@
+from reportlab.lib.styles import ParagraphStyle
 import pytesseract
 from PIL import Image
 import io
@@ -369,11 +370,28 @@ def callback_query(call):
 
 # 🧠 ANÁLISE RESUMIDA
     elif call.data == "nova_analise":
-        user_state[call.from_user.id]["tipo"] = "analise_resumida"
-
-        bot.send_message(call.message.chat.id, "🔎 Gerando análise resumida do caso...")
-
-        processar_ia_direta(call.message)  # 🔥 substituído
+    nome_paciente = user_state.get(call.from_user.id, {}).get("paciente")
+        if nome_paciente:
+            paciente = pacientes_coll.find_one({
+            "profissional_id": call.from_user.id,
+            "nome": nome_paciente
+            }) or {}
+            memoria = montar_memoria_clinica(paciente)
+        
+            prompt = f"""
+            {PROMPT_SISTEMA}
+        
+            Paciente: {nome_paciente}
+            Histórico: {memoria}
+        
+            Gere uma NOVA ANÁLISE RESUMIDA do caso:
+            1. RESUMO ATUAL
+            2. PROGRESSÃO CLÍNICA
+            3. CONDUTAS RECOMENDADAS
+            """
+            chamar_gemini(call.message, prompt, nome_paciente)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Paciente não selecionado.")
 
 # 📄 GERAR PDF
     elif call.data.startswith("pdf_"):
@@ -567,12 +585,6 @@ def processar_ia_paciente(message, nome):
     """
     chamar_gemini(message, prompt, nome)
 
-
-
-def processar_ia_direta(message):
-    prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
-    chamar_gemini(message, prompt)
-
 # =========================
 # 📄 SISTEMA DE LAUDOS + PDF
 # =========================
@@ -610,10 +622,10 @@ texto_analise):
     elementos.append(Spacer(1, 20))
     
     # Conteúdo da Análise
-for linha in texto_analise.split('\n'):
-    if linha.strip():
-        elementos.append(Paragraph(linha, style_corpo))
-        elementos.append(Spacer(1, 8))
+    for linha in texto_analise.split('\n'):
+        if linha.strip():
+            elementos.append(Paragraph(linha, style_corpo))
+            elementos.append(Spacer(1, 8))
             
     doc.build(elementos)
     buffer.seek(0)
@@ -861,23 +873,23 @@ def salvar_evolucao(message, nome):
     
 
     prompt = f"""
-{PROMPT_SISTEMA}
+    {PROMPT_SISTEMA}
 
-Paciente: {nome}
+    Paciente: {nome}
 
-Histórico clínico completo:
-{memoria}
+    Histórico clínico completo:
+    {memoria}
 
-Nova evolução do dia:
-{nova_info}
+    Nova evolução do dia:
+    {nova_info}
 
-Realize:
-1. Interpretação da evolução
-2. Progressão clínica
-3. Ajuste de conduta
-4. Próximos passos
-5. Prognóstico
-"""
+    Realize:
+    1. Interpretação da evolução
+    2. Progressão clínica
+    3. Ajuste de conduta
+    4. Próximos passos
+    5. Prognóstico
+    """
 
     user_state.pop(message.from_user.id, None)
 

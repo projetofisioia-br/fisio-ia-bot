@@ -657,7 +657,7 @@ Finalize com assinatura profissional (nome, registro) e espaço para assinatura 
         except Exception as e:
             bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
 
-        elif data == "dashboard":
+    elif data == "dashboard":
         cmd_dashboard(call.message)
 
     elif data == "indicar":

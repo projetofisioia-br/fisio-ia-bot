@@ -13,7 +13,7 @@ from PIL import Image
 import requests
 import telebot
 from telebot import types
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template_string, request
 from pymongo import MongoClient
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -41,14 +41,13 @@ client = MongoClient(MONGO_URI)
 db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
 uso_coll = db['uso_usuarios']
-logs_coll = db['logs_analises']  # para métricas
+logs_coll = db['logs_analises']
 
 # ================= FUNÇÕES AUXILIARES =================
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
 def registrar_usuario_se_novo(user_id):
-    """Registra um novo usuário se não existir"""
     if is_admin(user_id):
         return
     user = uso_coll.find_one({"user_id": user_id})
@@ -69,7 +68,6 @@ def registrar_usuario_se_novo(user_id):
                 pass
 
 def verificar_assinatura(user):
-    """Retorna True se usuário tem assinatura PRO ativa"""
     if user.get("pro"):
         expira = user.get("pro_expira_em", 0)
         if time.time() > expira:
@@ -79,7 +77,6 @@ def verificar_assinatura(user):
     return False
 
 def pode_usar(user_id):
-    """Verifica limite de uso (5 gratuitas) ou assinatura PRO"""
     if is_admin(user_id):
         return True
 
@@ -106,7 +103,6 @@ def pode_usar(user_id):
     return True
 
 def extrair_texto_arquivo(file_bytes):
-    """OCR em imagem"""
     try:
         imagem = Image.open(io.BytesIO(file_bytes))
         texto = pytesseract.image_to_string(imagem, lang='por')
@@ -115,7 +111,6 @@ def extrair_texto_arquivo(file_bytes):
         return f"Erro OCR: {str(e)}"
 
 def montar_memoria_clinica(paciente):
-    """Constrói resumo do histórico clínico do paciente"""
     memoria = ""
     if paciente.get("ultima_analise"):
         memoria += f"\nÚltima análise:\n{paciente['ultima_analise'][:800]}"
@@ -130,7 +125,6 @@ def montar_memoria_clinica(paciente):
     return memoria.strip()
 
 def gerar_pdf(nome_paciente, texto_analise):
-    """Gera PDF a partir do texto e retorna buffer BytesIO"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
@@ -159,15 +153,12 @@ def gerar_pdf(nome_paciente, texto_analise):
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "chave_secreta_temporaria")
 
-# Rota principal para verificar se o servidor está online
 @app.route('/')
 def home():
     return "MestreFisio V5.0 - Servidor Ativo 🧠"
 
-# Dashboard ADMIN
 @app.route('/admin')
 def admin_dashboard():
-    # Autenticação simples por ID (poderia ser melhorada)
     user_id = request.args.get('user_id')
     if not user_id or not is_admin(int(user_id)):
         return "Acesso negado", 403
@@ -175,8 +166,6 @@ def admin_dashboard():
     total_usuarios = uso_coll.count_documents({})
     total_pacientes = pacientes_coll.count_documents({})
     total_analises = logs_coll.count_documents({})
-
-    # Últimos usuários
     ultimos_usuarios = list(uso_coll.find().sort("_id", -1).limit(10))
 
     return render_template_string(ADMIN_TEMPLATE, 
@@ -185,27 +174,20 @@ def admin_dashboard():
                                   total_analises=total_analises,
                                   ultimos_usuarios=ultimos_usuarios)
 
-# Dashboard PROFISSIONAL
 @app.route('/profissional')
 def profissional_dashboard():
     user_id = request.args.get('user_id')
     if not user_id:
         return "Identifique-se com ?user_id=123", 400
-
     user_id = int(user_id)
-    # Busca profissional no banco
     profissional = uso_coll.find_one({"user_id": user_id})
     if not profissional:
         return "Profissional não encontrado", 404
-
-    # Seus pacientes
     pacientes = list(pacientes_coll.find({"profissional_id": user_id}).sort("data", -1))
-
     return render_template_string(PROFISSIONAL_TEMPLATE,
                                   profissional=profissional,
                                   pacientes=pacientes)
 
-# Templates HTML embutidos (simplificados)
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -247,16 +229,14 @@ PROFISSIONAL_TEMPLATE = """
 def run_flask():
     app.run(host='0.0.0.0', port=10000)
 
-# Inicia o servidor Flask em uma thread separada
 flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
+
 # =================================================================
 # BLOCO 2 - BOT TELEGRAM, HANDLERS E FLUXOS CLÍNICOS
 # =================================================================
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
-
-# Estado global para fluxos
 user_state = {}
 
 # ================= PROMPT SISTEMA =================
@@ -269,87 +249,29 @@ Fornecer respostas com raciocínio clínico estruturado, profundidade técnica a
 ESTRUTURA OBRIGATÓRIA (SEMPRE USAR E NUNCA OMITIR ETAPAS):
 
 1. Definição clínica
-Explique a condição com base médica, incluindo fisiopatologia e mecanismo de lesão.
-
 2. Anatomia e biomecânica envolvida
-Descreva músculos, articulações, ligamentos, nervos e impacto funcional.
-
 3. Etiologia / causas
-Classifique em: traumática, degenerativa, inflamatória, mecânica, esportiva, neurológica, pós-cirúrgica.
-
 4. Sinais e sintomas
-Detalhe dor, padrão, irradiação, limitações e alterações funcionais.
-
 5. Raciocínio clínico
-Explique como um especialista interpreta o caso e formula hipóteses.
-
 6. Avaliação clínica
-Inclua anamnese dirigida, inspeção, palpação e avaliação funcional.
-
 7. Testes clínicos
-Para cada teste: nome, execução, resultado positivo e interpretação.
-
 8. Diagnósticos diferenciais
-Liste condições com sintomas semelhantes.
-
 9. Exames complementares
-Indicações e achados esperados.
-
 10. Classificação da lesão
-Se aplicável (graus, tipos, escalas).
-
 11. Conduta fisioterapêutica
-Divida em fase aguda, intermediária e avançada.
-
 12. Protocolo em atletas
-Inclua progressão de carga, critérios de retorno ao esporte e prevenção de recidiva.
-
 13. Algoritmo clínico
-1. sintoma
-2. hipótese
-3. teste
-4. confirmação
-5. conduta
-
 14. Red flags
-Liste sinais de alerta clínico grave.
-
 15. Evidência científica
-Baseie-se em diretrizes clínicas, estudos relevantes e prática baseada em evidência.
-
-DIFERENCIAIS OBRIGATÓRIOS:
-- Correlacionar estrutura com função
-- Integrar biomecânica com dor
-- Explicar o raciocínio clínico
-- Diferenciar origem muscular, articular e neural
-- Considerar cadeia cinética
-- Considerar compensações corporais
-- Abordar controle motor e estabilidade
-- Incluir raciocínio funcional
-
-ABORDAGENS COMPLEMENTARES:
-Integrar conceitos de Facilitação Neuromuscular Proprioceptiva (PNF), biomecânica funcional, cadeias musculares, controle motor, reeducação postural, mobilização neural e princípios de reabilitação esportiva.
 
 REGRAS:
 - Não fornecer respostas superficiais
-- Não simplificar excessivamente
-- Não omitir etapas
-- Não sair da estrutura definida
 - Priorizar clareza e profundidade
-
-NÍVEL DE RESPOSTA:
-Equivalente a residência clínica, especialização em fisioterapia ortopédica e medicina esportiva, com base em literatura científica.
-
-MODO AVANÇADO (quando solicitado):
-Adicionar fluxogramas clínicos, protocolos esportivos de elite, escalas funcionais, critérios objetivos de progressão e estratégias avançadas de reabilitação.
-
-COMPORTAMENTO:
-Pensar como clínico experiente, responder como especialista e professor, estruturar como protocolo profissional e ensinar raciocínio clínico de forma aplicada.
+- Pensar como clínico experiente
 """
 
 # ================= FUNÇÃO DE CHAMADA À IA =================
 def chamar_gemini(message, prompt, nome_paciente=None):
-    """Chama a API Gemini e envia a resposta fragmentada"""
     if not is_admin(message.from_user.id):
         registrar_usuario_se_novo(message.from_user.id)
         if not pode_usar(message.from_user.id):
@@ -374,7 +296,6 @@ def chamar_gemini(message, prompt, nome_paciente=None):
             print(res_data)
             return None
 
-        # Salvar análise se nome_paciente fornecido
         if nome_paciente:
             pacientes_coll.update_one(
                 {"profissional_id": message.from_user.id, "nome": nome_paciente},
@@ -389,7 +310,6 @@ def chamar_gemini(message, prompt, nome_paciente=None):
             })
 
         bot.delete_message(message.chat.id, aguarde.message_id)
-        # Enviar em partes
         for p in [analise[i:i+1500] for i in range(0, len(analise), 1500)]:
             bot.send_message(message.chat.id, p)
             time.sleep(1)
@@ -408,6 +328,7 @@ def menu_principal():
         types.InlineKeyboardButton("👥 Pacientes", callback_data="pacientes"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
+        types.InlineKeyboardButton("📄 Gerar Laudo/Atestado", callback_data="gerar_laudo"),  # NOVO
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos")
     )
     if ADMIN_ID:
@@ -423,16 +344,87 @@ def send_welcome(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
-    if call.data == "novo_paciente":
+    data = call.data
+
+    if data == "novo_paciente":
         msg = bot.send_message(call.message.chat.id, "📝 Nome do paciente:")
         bot.register_next_step_handler(msg, obter_nome_paciente)
-    elif call.data == "duvida_tecnica":
+
+    elif data == "duvida_tecnica":
         msg = bot.send_message(call.message.chat.id, "💡 Qual condição deseja analisar hoje?")
         bot.register_next_step_handler(msg, processar_ia_direta)
-    elif call.data == "analisar_laudo":
+
+    elif data == "analisar_laudo":
         user_state[call.from_user.id] = {"tipo": "laudo"}
         bot.send_message(call.message.chat.id, "📷 Envie a imagem ou PDF do laudo para análise.")
-    elif call.data == "pacientes":
+
+    elif data == "gerar_laudo":  # NOVO FLUXO: iniciar seleção de paciente para laudo
+        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
+        if not pacientes:
+            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
+            return
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for p in pacientes:
+            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"laudo_sel_paciente_{p['nome']}"))
+        bot.send_message(call.message.chat.id, "Selecione o paciente para gerar laudo/atestado:", reply_markup=markup)
+
+    elif data.startswith("laudo_sel_paciente_"):
+        nome = data.replace("laudo_sel_paciente_", "")
+        user_state[call.from_user.id] = {"tipo": "laudo_tipo", "paciente": nome}
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        tipos = [
+            ("🧾 Laudo clínico", "clinico"),
+            ("🏋️ Exercícios", "exercicios"),
+            ("📉 Evolução", "evolucao"),
+            ("🛌 Atestado", "atestado"),
+            ("⚡ Tratamento", "tratamento"),
+            ("📊 Convênio", "convenio"),
+            ("🧠 Biomecânica", "biomecanica")
+        ]
+        for nome_tipo, tipo in tipos:
+            markup.add(types.InlineKeyboardButton(nome_tipo, callback_data=f"laudo_tipo_{tipo}_{nome}"))
+        bot.send_message(call.message.chat.id, f"Tipo de laudo para {nome}:", reply_markup=markup)
+
+    elif data.startswith("laudo_tipo_"):
+        # formato: laudo_tipo_tipo_nome
+        partes = data.split("_")
+        tipo = partes[2]
+        nome = partes[3]
+        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
+        if not paciente:
+            bot.send_message(call.message.chat.id, "Paciente não encontrado.")
+            return
+        memoria = montar_memoria_clinica(paciente)
+        profissional = uso_coll.find_one({"user_id": call.from_user.id})
+        nome_prof = profissional.get("nome_profissional", "Profissional")
+        registro = profissional.get("registro_profissional", "")
+
+        prompt = f"""
+{PROMPT_SISTEMA}
+
+Paciente: {nome}
+
+Histórico clínico completo:
+{memoria}
+
+Gere um laudo do tipo: {tipo}
+
+Inclua:
+- Análise clínica
+- Conduta
+- Prognóstico
+
+Finalize com assinatura profissional.
+"""
+        analise = chamar_gemini(call.message, prompt, nome)
+        if analise:
+            texto_final = f"Paciente: {nome}\n\n{analise}\n\n---\nProfissional responsável:\n{nome_prof}\nRegistro: {registro}"
+            pdf_buffer = gerar_pdf(nome, texto_final)
+            bot.send_document(call.message.chat.id, pdf_buffer, visible_file_name=f"Laudo_{tipo}_{nome}.pdf")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
+
+    elif data == "pacientes":
         pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
         if not pacientes:
             bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
@@ -441,8 +433,9 @@ def callback_query(call):
         for p in pacientes:
             markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"paciente_{p['nome']}"))
         bot.send_message(call.message.chat.id, "👥 Selecione o paciente:", reply_markup=markup)
-    elif call.data.startswith("paciente_"):
-        nome = call.data.replace("paciente_", "")
+
+    elif data.startswith("paciente_"):
+        nome = data.replace("paciente_", "")
         paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
         if not paciente:
             bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
@@ -456,22 +449,23 @@ def callback_query(call):
             types.InlineKeyboardButton("📄 Gerar Laudo PDF", callback_data=f"pdf_{nome}")
         )
         bot.send_message(call.message.chat.id, texto, reply_markup=markup)
-    elif call.data == "evolucao_diaria":
+
+    elif data == "evolucao_diaria":
         msg = bot.send_message(call.message.chat.id, "✍️ Envie a evolução do dia:")
         bot.register_next_step_handler(msg, receber_evolucao)
-    elif call.data == "nova_analise":
+
+    elif data == "nova_analise":
         nome = user_state.get(call.from_user.id, {}).get("paciente")
         if not nome:
             bot.send_message(call.message.chat.id, "Erro: paciente não identificado.")
             return
         paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
         memoria = montar_memoria_clinica(paciente)
-        msg = bot.send_message(call.message.chat.id, "🔎 Gerando análise resumida do caso...")
-        # Simula uma pergunta direta com contexto
         prompt = f"{PROMPT_SISTEMA}\n\nPACIENTE: {nome}\nHISTÓRICO:\n{memoria}\n\nFaça uma análise resumida do caso atual e sugira próximas condutas."
         chamar_gemini(call.message, prompt, nome)
-    elif call.data.startswith("pdf_"):
-        nome = call.data.split("_")[1]
+
+    elif data.startswith("pdf_"):
+        nome = data.split("_")[1]
         paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
         if paciente and paciente.get("ultima_analise"):
             bot.send_message(call.message.chat.id, f"⏳ Gerando PDF de resumo para {nome}...")
@@ -479,7 +473,8 @@ def callback_query(call):
             bot.send_document(call.message.chat.id, pdf_buffer, visible_file_name=f"Resumo_Clinico_{nome}.pdf")
         else:
             bot.send_message(call.message.chat.id, "❌ Não encontrei uma análise salva para gerar o resumo.")
-    elif call.data == "metricas_admin":
+
+    elif data == "metricas_admin":
         if not is_admin(call.from_user.id):
             bot.send_message(call.message.chat.id, "Acesso restrito.")
             return
@@ -487,7 +482,8 @@ def callback_query(call):
         total_pacientes = pacientes_coll.count_documents({})
         total_analises = logs_coll.count_documents({})
         bot.send_message(call.message.chat.id, f"📊 MÉTRICAS\n\n👥 Usuários: {total_usuarios}\n🧾 Pacientes: {total_pacientes}\n🧠 Análises: {total_analises}")
-    elif call.data == "planos":
+
+    elif data == "planos":
         try:
             bot.send_invoice(
                 chat_id=call.message.chat.id,
@@ -501,6 +497,7 @@ def callback_query(call):
             )
         except Exception as e:
             bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
+
     else:
         bot.send_message(call.message.chat.id, f"⚠️ Comando não reconhecido.")
 
@@ -546,7 +543,6 @@ def receber_evolucao(message):
         upsert=True
     )
     bot.send_message(message.chat.id, f"✅ Evolução registrada em {data_hora}.")
-    # Opcional: gerar nova análise automaticamente
     paciente = pacientes_coll.find_one({"profissional_id": message.from_user.id, "nome": nome})
     memoria = montar_memoria_clinica(paciente)
     prompt = f"{PROMPT_SISTEMA}\n\nPaciente: {nome}\nHistórico:\n{memoria}\nNova evolução: {message.text}\n\nFaça uma análise resumida e sugestões."
@@ -560,7 +556,6 @@ def receber_arquivo(message):
         return
     bot.send_message(message.chat.id, "🔍 Processando laudo...")
     try:
-        # Obtém o arquivo
         if message.document:
             file_info = bot.get_file(message.document.file_id)
         else:
@@ -591,95 +586,38 @@ def pagamento_sucesso(message):
         upsert=True
     )
     bot.send_message(message.chat.id, "💎 Pagamento aprovado! Plano PRO ativo por 30 dias 🚀")
+
 # =================================================================
-# BLOCO 3 - COMANDOS DE LAUDO, PDF E EXECUÇÃO FINAL
+# BLOCO 3 - COMANDOS ADICIONAIS E EXECUÇÃO
 # =================================================================
 
-# ================= COMANDO /LAUDO (versão unificada) =================
+# ================= COMANDO /LAUDO (alternativa ao botão) =================
 @bot.message_handler(commands=['laudo'])
-def iniciar_laudo(message):
+def cmd_laudo(message):
     pacientes = list(pacientes_coll.find({"profissional_id": message.from_user.id}))
     if not pacientes:
         bot.send_message(message.chat.id, "📭 Nenhum paciente cadastrado.")
         return
     markup = types.InlineKeyboardMarkup(row_width=1)
     for p in pacientes:
-        markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"laudo_paciente_{p['nome']}"))
-    bot.send_message(message.chat.id, "Selecione o paciente para gerar laudo:", reply_markup=markup)
+        markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"laudo_sel_paciente_{p['nome']}"))
+    bot.send_message(message.chat.id, "Selecione o paciente para gerar laudo/atestado:", reply_markup=markup)
 
-# Callback para laudos
-@bot.callback_query_handler(func=lambda call: call.data.startswith("laudo_paciente_"))
-def callback_laudo_paciente(call):
-    nome = call.data.replace("laudo_paciente_", "")
-    # Guardar nome no estado para próximo passo
-    user_state[call.from_user.id] = {"tipo": "laudo_tipo", "paciente": nome}
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    tipos = [
-        ("🧾 Clínico", "clinico"), ("🏋️ Exercícios", "exercicios"), ("📉 Evolução", "evolucao"),
-        ("🛌 Atestado", "atestado"), ("⚡ Tratamento", "tratamento"), ("📊 Convênio", "convenio"),
-        ("🧠 Biomecânica", "biomecanica")
-    ]
-    for nome_tipo, tipo in tipos:
-        markup.add(types.InlineKeyboardButton(nome_tipo, callback_data=f"laudo_tipo_{tipo}_{nome}"))
-    bot.send_message(call.message.chat.id, f"Tipo de laudo para {nome}:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("laudo_tipo_"))
-def callback_gerar_laudo(call):
-    # Formato: laudo_tipo_tipo_nome
-    partes = call.data.split("_")
-    tipo = partes[2]
-    nome = partes[3]
-    paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
-    if not paciente:
-        bot.send_message(call.message.chat.id, "Paciente não encontrado.")
-        return
-    memoria = montar_memoria_clinica(paciente)
-    profissional = uso_coll.find_one({"user_id": call.from_user.id})
-    nome_prof = profissional.get("nome_profissional", "Profissional")
-    registro = profissional.get("registro_profissional", "")
-
-    prompt = f"""
-{PROMPT_SISTEMA}
-
-Paciente: {nome}
-
-Histórico clínico completo:
-{memoria}
-
-Gere um laudo do tipo: {tipo}
-
-Inclua:
-- Análise clínica
-- Conduta
-- Prognóstico
-
-Finalize com assinatura profissional.
-"""
-    # Chamar IA e gerar PDF
-    analise = chamar_gemini(call.message, prompt, nome)  # salva no paciente também
-    if analise:
-        texto_final = f"Paciente: {nome}\n\n{analise}\n\n---\nProfissional responsável:\n{nome_prof}\nRegistro: {registro}"
-        pdf_buffer = gerar_pdf(nome, texto_final)
-        bot.send_document(call.message.chat.id, pdf_buffer, visible_file_name=f"Laudo_{tipo}_{nome}.pdf")
-    else:
-        bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
-
-# ================= COMANDO /DASH (para acessar dashboard web) =================
+# ================= COMANDO /DASHBOARD =================
 @bot.message_handler(commands=['dashboard'])
 def dashboard_link(message):
     user_id = message.from_user.id
-    # Link para dashboard profissional
-    link = f"https://seu-dominio.com/profissional?user_id={user_id}"
-    bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link}")
+    # Substitua pelo domínio real do seu deploy
+    dominio = https://fisio-ia-bot-1.onrender.com  # ⚠️ ALTERE PARA O DOMÍNIO REAL
+    link_prof = f"{dominio}/profissional?user_id={user_id}"
+    bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link_prof}")
     if is_admin(user_id):
-        link_admin = f"https://seu-dominio.com/admin?user_id={user_id}"
+        link_admin = f"{dominio}/admin?user_id={user_id}"
         bot.send_message(message.chat.id, f"👑 Link admin:\n{link_admin}")
 
 # ================= EXECUÇÃO =================
 if __name__ == "__main__":
-    # Garantir que o servidor Flask já está rodando (thread iniciada no Bloco 1)
     bot.remove_webhook()
     time.sleep(2)
     print("Bot iniciado...")
     bot.infinity_polling(timeout=120, long_polling_timeout=60)
-

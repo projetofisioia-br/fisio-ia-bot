@@ -58,22 +58,18 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
         return
     user = uso_coll.find_one({"user_id": user_id})
     if not user:
-        # Se veio com código de indicação, creditar desconto ao indicador
         if codigo_indicador:
             indicador = uso_coll.find_one({"codigo_indicacao": codigo_indicador})
             if indicador and indicador["user_id"] != user_id:
-                # Adiciona 25% de crédito (até 50% por mês, mas vamos acumular)
                 novo_credito = indicador.get("creditos_desconto", 0) + 25
                 uso_coll.update_one(
                     {"_id": indicador["_id"]},
                     {"$set": {"creditos_desconto": novo_credito}}
                 )
-                # Registrar a indicação
                 uso_coll.update_one(
                     {"_id": indicador["_id"]},
                     {"$push": {"indicacoes": {"user_id": user_id, "data": datetime.now()}}}
                 )
-                # Notificar o indicador (opcional)
                 try:
                     bot = telebot.TeleBot(TOKEN_TELEGRAM)
                     bot.send_message(indicador["user_id"], f"🎉 Parabéns! Um novo profissional se cadastrou usando seu código. Você ganhou +25% de desconto na próxima mensalidade! Seu saldo atual: {novo_credito}%")
@@ -217,7 +213,8 @@ def profissional_dashboard():
     pacientes = list(pacientes_coll.find({"profissional_id": user_id}).sort("data", -1))
     return render_template_string(PROFISSIONAL_TEMPLATE,
                                   profissional=profissional,
-                                  pacientes=pacientes)
+                                  pacientes=pacientes,
+                                  admin_id=ADMIN_ID)
 
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
@@ -245,7 +242,12 @@ PROFISSIONAL_TEMPLATE = """
 <body>
 <h1>Olá, {{ profissional.nome_profissional or profissional.user_id }}</h1>
 <p>Registro: {{ profissional.registro_profissional or "Não informado" }}</p>
-<p>Status: {% if profissional.pro %}PRO Ativo{% else %}Plano Gratuito ({{ profissional.uso }} de 5 usos){% endif %}</p>
+<p>Status: 
+{% if profissional.user_id == admin_id %}ADMINISTRADOR (Acesso Total)
+{% elif profissional.pro %}PRO Ativo
+{% else %}Plano Gratuito ({{ profissional.uso }} de 5 usos)
+{% endif %}
+</p>
 
 <h2>Seus Pacientes</h2>
 <ul>
@@ -264,13 +266,13 @@ flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
 
 # =================================================================
-# BLOCO 2 - BOT TELEGRAM, HANDLERS, FLUXOS CLÍNICOS E INDICAÇÃO
+# BLOCO 2 - BOT TELEGRAM, HANDLERS E PROMPTS
 # =================================================================
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 user_state = {}
 
-# ================= PROMPT SISTEMA PRINCIPAL (para análises) =================
+# ================= PROMPT SISTEMA PRINCIPAL =================
 PROMPT_SISTEMA = """
 Atue como um Fisioterapeuta PhD especialista em ortopedia, biomecânica, medicina esportiva, reabilitação funcional e raciocínio clínico avançado, com domínio de literatura científica e prática clínica baseada em evidências. Sua função é realizar análise clínica profunda, estruturada e aplicada, simulando o raciocínio de um especialista experiente.
 
@@ -301,7 +303,7 @@ REGRAS:
 - Pensar como clínico experiente
 """
 
-# ================= PROMPTS PARA LAUDOS (DIRETOS) =================
+# ================= PROMPTS PARA LAUDOS =================
 PROMPTS_LAUDO = {
     "clinico": "Gere um laudo clínico conciso e objetivo (máximo 1 página). Inclua: 1) Resumo do caso, 2) Diagnóstico principal, 3) Conduta terapêutica, 4) Prognóstico. Seja direto e evite repetições.",
     "exercicios": "Gere um programa de exercícios terapêuticos detalhado, mas conciso (máximo 1 página). Liste: 1) Objetivos, 2) Exercícios (nome, execução, séries/repetições), 3) Frequência e cuidados.",
@@ -372,8 +374,8 @@ def menu_principal():
         types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
         types.InlineKeyboardButton("📄 Gerar Laudo/Atestado", callback_data="gerar_laudo"),
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos"),
-        types.InlineKeyboardButton("🌐 Dashboard", callback_data="dashboard"),  # NOVO
-        types.InlineKeyboardButton("🎁 Indique um colega", callback_data="indicar")  # NOVO
+        types.InlineKeyboardButton("🌐 Dashboard", callback_data="dashboard"),
+        types.InlineKeyboardButton("🎁 Indique um colega", callback_data="indicar")
     )
     if ADMIN_ID:
         markup.add(types.InlineKeyboardButton("📊 Métricas (Admin)", callback_data="metricas_admin"))
@@ -381,16 +383,41 @@ def menu_principal():
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    # Verifica se veio com parâmetro de indicação
     args = message.text.split()
     codigo = args[1] if len(args) > 1 else None
     registrar_usuario_se_novo(message.from_user.id, codigo)
+    if not verificar_dados_profissional(message):
+        return
     bot.send_message(message.chat.id, "🚀 **MestreFisio V5.0 Especialista**\nAgora com memória clínica inteligente.", reply_markup=menu_principal())
 
-# ================= HANDLERS DOS NOVOS COMANDOS =================
+# ================= CAPTURA DE DADOS DO PROFISSIONAL =================
+def verificar_dados_profissional(message):
+    user = uso_coll.find_one({"user_id": message.from_user.id})
+    if not user or not user.get("nome_profissional") or not user.get("registro_profissional"):
+        msg = bot.send_message(message.chat.id, "📝 Antes de continuar, preciso do seu nome completo e número de registro profissional (Crefito).\n\nEnvie no formato:\n`Nome Completo | Crefito 123456`", parse_mode='Markdown')
+        bot.register_next_step_handler(msg, salvar_dados_profissional)
+        return False
+    return True
+
+def salvar_dados_profissional(message):
+    try:
+        partes = message.text.split('|')
+        if len(partes) < 2:
+            raise ValueError
+        nome = partes[0].strip()
+        registro = partes[1].strip()
+        uso_coll.update_one(
+            {"user_id": message.from_user.id},
+            {"$set": {"nome_profissional": nome, "registro_profissional": registro}}
+        )
+        bot.send_message(message.chat.id, f"✅ Dados salvos:\n👤 {nome}\n🆔 {registro}\n\nAgora você pode usar todas as funcionalidades!", reply_markup=menu_principal())
+    except:
+        bot.send_message(message.chat.id, "❌ Formato inválido. Use exatamente:\n`Nome Completo | Crefito 123456`\nTente novamente.")
+        verificar_dados_profissional(message)
+
+# ================= HANDLERS DOS COMANDOS =================
 @bot.message_handler(commands=['historico'])
 def cmd_historico(message):
-    # Redireciona para a lista de pacientes (submenu "Pacientes")
     pacientes = list(pacientes_coll.find({"profissional_id": message.from_user.id}))
     if not pacientes:
         bot.send_message(message.chat.id, "📭 Nenhum paciente cadastrado.")
@@ -402,7 +429,6 @@ def cmd_historico(message):
 
 @bot.message_handler(commands=['planos'])
 def cmd_planos(message):
-    # Mostra informações sobre planos
     bot.send_message(message.chat.id, "💎 **Planos disponíveis**\n\nGratuito: 5 análises por mês.\nPRO: acesso ilimitado, R$ 59,90/mês.\n\nPara assinar, use o botão 'Planos Pagos' no menu.", reply_markup=menu_principal())
 
 @bot.message_handler(commands=['ajuda'])
@@ -425,14 +451,11 @@ Comandos rápidos:
 /ajuda – Este texto
 /dashboard – Link para painel
 /indicar – Gerar link de indicação
-
-Dúvidas? Fale com o suporte: @seudominio
 """
     bot.send_message(message.chat.id, ajuda_texto, parse_mode='Markdown')
 
 @bot.message_handler(commands=['consulta'])
 def cmd_consulta(message):
-    # Inicia fluxo de dúvida técnica
     msg = bot.send_message(message.chat.id, "💡 Qual condição deseja analisar hoje?")
     bot.register_next_step_handler(msg, processar_ia_direta)
 
@@ -464,7 +487,10 @@ def cmd_indicar(message):
     )
     bot.send_message(message.chat.id, texto_convite, parse_mode='Markdown')
 
-# ================= CALLBACKS =================
+# =================================================================
+# BLOCO 3 - CALLBACKS E FLUXOS PRINCIPAIS
+# =================================================================
+
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     bot.answer_callback_query(call.id)
@@ -521,8 +547,8 @@ def callback_query(call):
         profissional = uso_coll.find_one({"user_id": call.from_user.id})
         nome_prof = profissional.get("nome_profissional", "Profissional")
         registro = profissional.get("registro_profissional", "")
+        especialidade = "Fisioterapeuta PhD Especialista em Ortopedia e Biomecânica"
 
-        # Usa prompt específico para o tipo de laudo
         prompt_laudo = PROMPTS_LAUDO.get(tipo, PROMPTS_LAUDO["clinico"])
         prompt = f"""
 {PROMPT_SISTEMA}
@@ -534,42 +560,89 @@ Histórico clínico completo:
 
 {prompt_laudo}
 
-Finalize com assinatura profissional (nome, registro) e espaço para assinatura física/digital.
+Finalize com assinatura profissional.
 """
         analise = chamar_gemini(call.message, prompt, nome)
         if analise:
-            texto_final = f"Paciente: {nome}\n\n{analise}\n\n---\nProfissional responsável:\n{nome_prof}\nRegistro: {registro}\n\n_________________________\nAssinatura"
+            texto_final = f"""Paciente: {nome}
+
+{analise}
+
+---
+
+**Atenciosamente,**
+
+**{nome_prof}**  
+{especialidade}  
+Registro: {registro}
+
+---
+
+**Assinatura do Paciente (confirmação de recebimento e compreensão):**
+
+_______________________________________
+{paciente.get('nome', nome)}
+
+"""
             pdf_buffer = gerar_pdf(nome, texto_final)
             bot.send_document(call.message.chat.id, pdf_buffer, visible_file_name=f"Laudo_{tipo}_{nome}.pdf")
         else:
             bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
 
     elif data == "pacientes":
-        # Filtro de status
-        markup = types.InlineKeyboardMarkup(row_width=3)
+        markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("Todos", callback_data="pacientes_filtro_todos"),
-            types.InlineKeyboardButton("Ativos", callback_data="pacientes_filtro_ativos"),
-            types.InlineKeyboardButton("Alta", callback_data="pacientes_filtro_alta")
+            types.InlineKeyboardButton("📋 Todos", callback_data="pacientes_filtro_todos"),
+            types.InlineKeyboardButton("🟢 Ativos", callback_data="pacientes_filtro_ativos"),
+            types.InlineKeyboardButton("🔴 Alta", callback_data="pacientes_filtro_alta"),
+            types.InlineKeyboardButton("🔤 A-Z", callback_data="pacientes_ordem_az"),
+            types.InlineKeyboardButton("🔠 Z-A", callback_data="pacientes_ordem_za"),
+            types.InlineKeyboardButton("📅 Mais recentes", callback_data="pacientes_ordem_recente"),
+            types.InlineKeyboardButton("📅 Mais antigos", callback_data="pacientes_ordem_antigo")
         )
-        bot.send_message(call.message.chat.id, "Filtrar pacientes por status:", reply_markup=markup)
+        bot.send_message(call.message.chat.id, "📊 Opções de filtro e ordenação:", reply_markup=markup)
 
-    elif data.startswith("pacientes_filtro_"):
-        filtro = data.split("_")[-1]
+    elif data.startswith("pacientes_filtro_") or data.startswith("pacientes_ordem_"):
+        partes = data.split("_")
+        tipo = partes[2]
         query = {"profissional_id": call.from_user.id}
-        if filtro == "ativos":
-            query["status"] = "ativo"
-        elif filtro == "alta":
-            query["status"] = "alta"
-        # "todos" não adiciona filtro
+        
+        if data.startswith("pacientes_filtro_"):
+            if tipo == "ativos":
+                query["status"] = "ativo"
+            elif tipo == "alta":
+                query["status"] = "alta"
+            user_state[call.from_user.id] = {"filtro": tipo, "ordem": user_state.get(call.from_user.id, {}).get("ordem", "az")}
+        else:
+            user_state[call.from_user.id] = {"ordem": tipo, "filtro": user_state.get(call.from_user.id, {}).get("filtro", "todos")}
+            if user_state[call.from_user.id]["filtro"] == "ativos":
+                query["status"] = "ativo"
+            elif user_state[call.from_user.id]["filtro"] == "alta":
+                query["status"] = "alta"
+        
         pacientes = list(pacientes_coll.find(query))
+        
         if not pacientes:
             bot.send_message(call.message.chat.id, "📭 Nenhum paciente encontrado.")
             return
+        
+        ordem = user_state.get(call.from_user.id, {}).get("ordem", "az")
+        if ordem == "az":
+            pacientes.sort(key=lambda x: x['nome'])
+        elif ordem == "za":
+            pacientes.sort(key=lambda x: x['nome'], reverse=True)
+        elif ordem == "recente":
+            pacientes.sort(key=lambda x: x.get('data', ''), reverse=True)
+        elif ordem == "antigo":
+            pacientes.sort(key=lambda x: x.get('data', ''))
+        
         markup = types.InlineKeyboardMarkup(row_width=1)
         for p in pacientes:
             status_emoji = "🟢" if p.get("status", "ativo") == "ativo" else "🔴"
-            markup.add(types.InlineKeyboardButton(f"{status_emoji} {p['nome']}", callback_data=f"paciente_{p['nome']}"))
+            data_consulta = p.get('data', 'N/A')
+            markup.add(types.InlineKeyboardButton(f"{status_emoji} {p['nome']} ({data_consulta})", callback_data=f"paciente_{p['nome']}"))
+        
+        markup.add(types.InlineKeyboardButton("🔙 Voltar aos filtros", callback_data="pacientes"))
         bot.send_message(call.message.chat.id, "👥 Selecione o paciente:", reply_markup=markup)
 
     elif data.startswith("paciente_"):
@@ -578,14 +651,14 @@ Finalize com assinatura profissional (nome, registro) e espaço para assinatura 
         if not paciente:
             bot.send_message(call.message.chat.id, "❌ Paciente não encontrado.")
             return
-        texto = f"📂 {nome}\n\nStatus: {paciente.get('status', 'ativo').upper()}\n\n🧠 Última análise:\n{paciente.get('ultima_analise', 'Sem análise anterior.')[:500]}..."
+        texto = f"📂 {nome}\n\nStatus: {paciente.get('status', 'ativo').upper()}\nData cadastro: {paciente.get('criado_em', 'N/A')}\nÚltima análise: {paciente.get('data', 'N/A')}\n\n🧠 Última análise:\n{paciente.get('ultima_analise', 'Sem análise anterior.')[:500]}..."
         user_state[call.from_user.id] = {"paciente": nome}
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("📈 Evolução diária", callback_data="evolucao_diaria"),
             types.InlineKeyboardButton("🧠 Nova análise", callback_data="nova_analise"),
             types.InlineKeyboardButton("📄 Gerar Laudo PDF", callback_data=f"pdf_{nome}"),
-            types.InlineKeyboardButton("🔄 Alterar Status", callback_data=f"alterar_status_{nome}")  # NOVO
+            types.InlineKeyboardButton("🔄 Alterar Status", callback_data=f"alterar_status_{nome}")
         )
         bot.send_message(call.message.chat.id, texto, reply_markup=markup)
 
@@ -606,7 +679,6 @@ Finalize com assinatura profissional (nome, registro) e espaço para assinatura 
             {"$set": {"status": novo_status, "data_alta": datetime.now() if novo_status == "alta" else None}}
         )
         bot.send_message(call.message.chat.id, f"✅ Status de {nome} alterado para {novo_status.upper()}.")
-        # Volta ao submenu do paciente
         callback_query(types.CallbackQuery(id=call.id, from_user=call.from_user, message=call.message, data=f"paciente_{nome}"))
 
     elif data == "evolucao_diaria":
@@ -666,10 +738,12 @@ Finalize com assinatura profissional (nome, registro) e espaço para assinatura 
     else:
         bot.send_message(call.message.chat.id, f"⚠️ Comando não reconhecido.")
 
-# ================= FUNÇÕES DE FLUXO =================
+# =================================================================
+# BLOCO 4 - FUNÇÕES DE FLUXO, ARQUIVOS, PAGAMENTOS E EXECUÇÃO
+# =================================================================
+
 def obter_nome_paciente(message):
     nome = message.text.upper().strip()
-    # Cria paciente com status padrão "ativo"
     pacientes_coll.update_one(
         {"profissional_id": message.from_user.id, "nome": nome},
         {"$setOnInsert": {"status": "ativo", "criado_em": datetime.now()}},
@@ -719,7 +793,6 @@ def receber_evolucao(message):
     prompt = f"{PROMPT_SISTEMA}\n\nPaciente: {nome}\nHistórico:\n{memoria}\nNova evolução: {message.text}\n\nFaça uma análise resumida e sugestões."
     chamar_gemini(message, prompt, nome)
 
-# ================= HANDLER DE ARQUIVOS (LAUDOS) =================
 @bot.message_handler(content_types=['photo', 'document'])
 def receber_arquivo(message):
     estado = user_state.get(message.from_user.id)
@@ -743,7 +816,6 @@ def receber_arquivo(message):
     finally:
         user_state.pop(message.from_user.id, None)
 
-# ================= PAGAMENTOS =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def process_pre_checkout_query(pre_checkout_query):
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
@@ -752,17 +824,13 @@ def process_pre_checkout_query(pre_checkout_query):
 def pagamento_sucesso(message):
     user_id = message.from_user.id
     user = uso_coll.find_one({"user_id": user_id})
-    # Aplica desconto acumulado
     desconto = user.get("creditos_desconto", 0)
-    valor_final = 5990  # R$ 59,90 em centavos
+    valor_final = 5990
     if desconto > 0:
-        # Desconto máximo 50%
         desconto_aplicado = min(desconto, 50)
         valor_final = int(valor_final * (1 - desconto_aplicado/100))
-        # Zera o saldo de desconto após aplicar
         uso_coll.update_one({"_id": user["_id"]}, {"$set": {"creditos_desconto": 0}})
         bot.send_message(message.chat.id, f"🎉 Desconto de {desconto_aplicado}% aplicado! Valor pago: R$ {valor_final/100:.2f}")
-    # Aqui normalmente você integraria com o gateway de pagamento. O Telegram já processou, então apenas ativamos o PRO.
     uso_coll.update_one(
         {"user_id": user_id},
         {"$set": {"pro": True, "pro_expira_em": time.time() + 30*24*60*60}},
@@ -770,17 +838,9 @@ def pagamento_sucesso(message):
     )
     bot.send_message(message.chat.id, "💎 Pagamento aprovado! Plano PRO ativo por 30 dias 🚀")
 
-# =================================================================
-# BLOCO 3 - COMANDOS ADICIONAIS E EXECUÇÃO
-# =================================================================
-
-# Os comandos /laudo e /dashboard já estão definidos no Bloco 2.
-# Este bloco contém apenas a execução final.
-
+# ================= EXECUÇÃO =================
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(2)
     print("Bot iniciado...")
     bot.infinity_polling(timeout=120, long_polling_timeout=60)
-
-    

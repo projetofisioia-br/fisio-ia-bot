@@ -370,7 +370,7 @@ def callback_query(call):
 
 # 🧠 ANÁLISE RESUMIDA
     elif call.data == "nova_analise":
-    nome_paciente = user_state.get(call.from_user.id, {}).get("paciente")
+        nome_paciente = user_state.get(call.from_user.id, {}).get("paciente")
         if nome_paciente:
             paciente = pacientes_coll.find_one({
             "profissional_id": call.from_user.id,
@@ -534,7 +534,18 @@ Analise o seguinte laudo médico:
 
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Erro ao processar laudo:\n{str(e)}")
+        
 
+def receber_evolucao(message):
+    estado = user_state.get(message.from_user.id)
+    if estado and estado.get("paciente"):
+        nome = estado["paciente"]
+        # Atualiza o estado para evolução
+        user_state[message.from_user.id] = {"tipo": "evolucao", "paciente": nome}
+        # Chama a função para processar
+        salvar_evolucao(message, nome)
+    else:
+        bot.send_message(message.chat.id, "❌ Paciente não identificado.")
 
 # 🔹 PROCESSAMENTO IA DIRETO
 def processar_ia_direta(message):
@@ -559,6 +570,32 @@ def receber_arquivo(message):
 
         user_state.pop(message.from_user.id, None)
 
+
+# Coloque depois da função receber_arquivo e antes da execução principal
+
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    estado = user_state.get(message.from_user.id)
+    
+    if estado and estado.get("tipo") == "evolucao":
+        nome = estado.get("paciente")
+        if nome:
+            salvar_evolucao(message, nome)
+        else:
+            bot.send_message(message.chat.id, "❌ Erro: paciente não identificado.")
+    elif estado and estado.get("tipo") == "novo_paciente":
+        processar_ia_paciente(message, estado.get("paciente"))
+    else:
+        # Se não estiver em nenhum fluxo específico
+        bot.send_message(
+            message.chat.id,
+            "Use o menu principal para acessar as funcionalidades.",
+            reply_markup=menu_principal()
+        )
+
+if __name__ == "__main__":
+    Thread(target=run).start()
+    # ...
 # --- FLUXO PACIENTE ---
 def obter_nome_paciente_fluxo(message):
     nome = message.text.upper().strip()

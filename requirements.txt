@@ -7,3 +7,5 @@ fpdf
 reportlab
 pytesseract
 Pillow
+pandas
+schedule

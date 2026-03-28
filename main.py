@@ -1,6 +1,30 @@
 # =================================================================
-# BLOCO 1 - IMPORTS, CONFIGURAÇÕES, BANCO, FUNÇÕES AUXILIARES E BUSCAS
+# BLOCO 1 - INSTALAÇÃO DE DEPENDÊNCIAS, IMPORTS, CONFIGURAÇÕES, BANCO E BUSCAS
 # =================================================================
+
+import subprocess
+import sys
+
+def instalar_pacotes():
+    pacotes = [
+        "pymed",
+        "requests",
+        "beautifulsoup4",
+        "pytesseract",
+        "pillow",
+        "telebot",
+        "flask",
+        "pymongo",
+        "reportlab"
+    ]
+    for pacote in pacotes:
+        try:
+            __import__(pacote.replace("-", "_"))
+        except ImportError:
+            print(f"Instalando {pacote}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pacote])
+
+instalar_pacotes()
 
 import os
 import io
@@ -71,7 +95,7 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
         uso_coll.insert_one({
             "user_id": user_id,
             "uso": 0,
-            "uso_buscas": 0,               # contador de buscas científicas
+            "uso_buscas": 0,
             "criado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "pro": False,
             "plano": "gratuito",
@@ -201,11 +225,10 @@ def gerar_pdf(nome_paciente, texto_analise):
 # ================= BUSCAS CIENTÍFICAS =================
 from pymed import PubMed
 import urllib.parse
-import xml.etree.ElementTree as ET
 
-pubmed = PubMed(tool="MestreFisio", email="pesquisador@exemplo.com")  # substitua pelo seu email
+pubmed = PubMed(tool="MestreFisio", email="pesquisador@exemplo.com")
 
-def buscar_pubmed(query, max_results=5):
+def buscar_pubmed(query, max_results=3):
     try:
         resultados = pubmed.query(query, max_results=max_results)
         artigos = []
@@ -222,9 +245,8 @@ def buscar_pubmed(query, max_results=5):
         print(f"Erro PubMed: {e}")
         return []
 
-def buscar_scielo(query, max_results=5):
+def buscar_scielo(query, max_results=3):
     try:
-        # API SciELO: http://api.scielo.org
         url = f"http://api.scielo.org/search/?q={urllib.parse.quote(query)}&lang=pt&limit={max_results}"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
@@ -243,9 +265,8 @@ def buscar_scielo(query, max_results=5):
         print(f"Erro SciELO: {e}")
         return []
 
-def buscar_lilacs(query, max_results=5):
+def buscar_lilacs(query, max_results=3):
     try:
-        # BVS API (LILACS)
         url = "https://pesquisa.bvsalud.org/portal/api/es/search"
         params = {
             "q": query,
@@ -271,12 +292,10 @@ def buscar_lilacs(query, max_results=5):
         return []
 
 def buscar_todas_fontes(query):
-    """Consulta PubMed, SciELO e LILACS e retorna lista unificada"""
-    pubmed = buscar_pubmed(query, max_results=3)
-    scielo = buscar_scielo(query, max_results=3)
-    lilacs = buscar_lilacs(query, max_results=3)
-    todos = pubmed + scielo + lilacs
-    # Remove duplicatas por título (simples)
+    pubmed_arts = buscar_pubmed(query, max_results=3)
+    scielo_arts = buscar_scielo(query, max_results=3)
+    lilacs_arts = buscar_lilacs(query, max_results=3)
+    todos = pubmed_arts + scielo_arts + lilacs_arts
     vistos = set()
     unicos = []
     for art in todos:
@@ -284,10 +303,9 @@ def buscar_todas_fontes(query):
         if titulo not in vistos:
             vistos.add(titulo)
             unicos.append(art)
-    return unicos[:7]  # máximo 7 artigos
+    return unicos[:7]
 
 def sintetizar_artigos_com_ia(query, artigos):
-    """Usa a IA para gerar um resumo dos artigos encontrados"""
     if not artigos:
         return "Nenhum artigo encontrado."
     texto_artigos = "\n\n".join([f"Fonte: {a['fonte']}\nTítulo: {a['titulo']}\nResumo: {a['resumo']}" for a in artigos])
@@ -299,7 +317,6 @@ Artigos:
 
 Síntese:
 """
-    # Chamada à IA
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
     try:
         response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
@@ -307,7 +324,7 @@ Síntese:
             res_data = response.json()
             return res_data['candidates'][0]['content']['parts'][0]['text']
         else:
-            return "Não foi possível gerar síntese."
+            return "Não foi possível gerar síntese (erro na IA)."
     except Exception as e:
         print(f"Erro síntese IA: {e}")
         return "Erro ao gerar síntese."
@@ -399,7 +416,7 @@ flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
 
 # =================================================================
-# BLOCO 2 - BOT, PROMPTS, MENU PRINCIPAL, HANDLERS E COMANDOS
+# BLOCO 2 - BOT, PROMPTS, MENU, HANDLERS E COMANDOS
 # =================================================================
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
@@ -445,6 +462,16 @@ Atue como um Fisioterapeuta PhD. O profissional tem uma dúvida sobre uma condi�
 
 Seja objetivo, prático e evite aprofundamento excessivo.
 """
+
+PROMPTS_LAUDO = {
+    "clinico": "Gere um laudo clínico conciso e objetivo (máximo 1 página). Inclua: 1) Resumo do caso, 2) Diagnóstico principal, 3) Conduta terapêutica, 4) Prognóstico. Seja direto e evite repetições.",
+    "exercicios": "Gere um programa de exercícios terapêuticos detalhado, mas conciso (máximo 1 página). Liste: 1) Objetivos, 2) Exercícios (nome, execução, séries/repetições), 3) Frequência e cuidados.",
+    "evolucao": "Gere um relato de evolução clínica objetiva (máximo 1 página). Inclua: 1) Resumo da evolução, 2) Comparação com avaliação anterior, 3) Ajustes na conduta, 4) Metas.",
+    "atestado": "Gere um atestado médico profissional (máximo 1 página). Inclua: 1) Identificação do paciente, 2) Período de afastamento (se aplicável), 3) CID e justificativa, 4) Recomendações. Formato oficial.",
+    "tratamento": "Gere um plano de tratamento estruturado (máximo 1 página). Inclua: 1) Objetivos de curto/médio/longo prazo, 2) Modalidades terapêuticas, 3) Cronograma, 4) Critérios de alta.",
+    "convenio": "Gere um relatório para convênio (máximo 1 página). Inclua: 1) Diagnóstico, 2) Evolução, 3) Sessões realizadas, 4) Resultados alcançados, 5) Necessidade de continuidade.",
+    "biomecanica": "Gere uma análise biomecânica funcional (máximo 1 página). Inclua: 1) Análise de cadeia cinética, 2) Compensações observadas, 3) Estratégias de correção, 4) Exercícios específicos."
+}
 
 # ================= FUNÇÃO DE CHAMADA À IA =================
 def chamar_gemini(message, prompt, nome_paciente=None, tipo="analise"):
@@ -505,7 +532,7 @@ def menu_principal():
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
         types.InlineKeyboardButton("📄 Gerar Laudo/Atestado", callback_data="gerar_laudo"),
-        types.InlineKeyboardButton("🔍 Buscar Artigos", callback_data="buscar_artigos"),  # NOVO
+        types.InlineKeyboardButton("🔍 Buscar Artigos", callback_data="buscar_artigos"),
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos"),
         types.InlineKeyboardButton("🌐 Dashboard", callback_data="dashboard"),
         types.InlineKeyboardButton("🎁 Indique um colega", callback_data="indicar")
@@ -612,7 +639,7 @@ def cmd_consulta(message):
 @bot.message_handler(commands=['dashboard'])
 def cmd_dashboard(message):
     user_id = message.from_user.id
-    dominio = "https://seu-dominio.com"  # Substitua pelo seu domínio real
+    dominio = "https://fisio-ia-bot-1.onrender.com"  # DOMÍNIO CORRIGIDO
     link_prof = f"{dominio}/profissional?user_id={user_id}"
     bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link_prof}")
     if is_admin(user_id):
@@ -626,26 +653,38 @@ def cmd_indicar(message):
         registrar_usuario_se_novo(message.from_user.id)
         user = uso_coll.find_one({"user_id": message.from_user.id})
     codigo = user.get("codigo_indicacao")
-    texto_convite = (
-        f"🎁 *Convide um colega e ambos ganham!*\n\n"
-        f"Compartilhe o link abaixo com profissionais da área. "
-        f"Cada novo cadastro com seu código lhe dá **25% de desconto** na próxima mensalidade "
-        f"(acumulável até 50%). O colega indicado também ganha **25% de desconto no primeiro mês**!\n\n"
-        f"🔗 Link de indicação:\n"
-        f"`https://t.me/{bot.get_me().username}?start={codigo}`\n\n"
-        f"🌟 **Benefícios do MestreFisio:**\n"
-        f"• Análises clínicas profundas\n"
-        f"• Laudos e atestados personalizados\n"
-        f"• Memória clínica inteligente\n"
-        f"• Busca em PubMed, SciELO e LILACS\n"
-        f"• Análise de exames por imagem\n\n"
+    link = f"https://t.me/{bot.get_me().username}?start={codigo}"
+
+    # Mensagem 1: explicação do sistema de indicação
+    explicacao = (
+        f"🎁 *Sistema de Indicação Premiada*\n\n"
+        f"Você recebe um código exclusivo: `{codigo}`\n\n"
+        f"*Como funciona:*\n"
+        f"• Compartilhe seu código com colegas fisioterapeutas.\n"
+        f"• Cada novo cadastro usando seu código lhe dá **25% de desconto** na próxima mensalidade.\n"
+        f"• O desconto pode acumular até **50%** por mês; o saldo não utilizado fica para meses futuros.\n"
+        f"• O colega indicado também ganha **25% de desconto** no primeiro mês!\n\n"
         f"Quanto mais indicar, mais desconto! 🚀"
     )
-    bot.send_message(message.chat.id, texto_convite, parse_mode='Markdown')
+    bot.send_message(message.chat.id, explicacao, parse_mode='Markdown')
 
+    # Mensagem 2: texto para copiar e enviar ao amigo
+    convite = (
+        f"🌟 *MestreFisio – Seu assistente de IA para fisioterapia!*\n\n"
+        f"Olá! Estou usando o MestreFisio e recomendo. É uma plataforma completa com:\n"
+        f"✅ Análises clínicas profundas\n"
+        f"✅ Laudos e atestados personalizados\n"
+        f"✅ Memória clínica inteligente\n"
+        f"✅ Busca em PubMed, SciELO e LILACS\n"
+        f"✅ Análise de exames por imagem\n\n"
+        f"Use meu link de indicação e ganhe **25% de desconto** no primeiro mês:\n\n"
+        f"{link}\n\n"
+        f"Vem ser um especialista com o MestreFisio! 🚀"
+    )
+    bot.send_message(message.chat.id, convite, parse_mode='Markdown')
 
 # =================================================================
-# BLOCO 3 - CALLBACKS PRINCIPAIS E FLUXOS (COM BUSCA DE ARTIGOS)
+# BLOCO 3 - CALLBACKS PRINCIPAIS E FLUXOS (COM BUSCA DE ARTIGOS E STATUS CORRIGIDOS)
 # =================================================================
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -706,7 +745,6 @@ def callback_query(call):
         registro = profissional.get("registro_profissional", "")
         especialidade = "Fisioterapeuta PhD Especialista em Ortopedia e Biomecânica"
 
-        # Prompt específico para laudos
         prompt_laudo = PROMPTS_LAUDO.get(tipo, PROMPTS_LAUDO["clinico"])
         prompt = f"""
 {PROMPT_SISTEMA_COMPLETO}
@@ -747,7 +785,7 @@ _______________________________________
         else:
             bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
 
-    # ========== NOVO: BUSCAR ARTIGOS ==========
+    # ========== BUSCAR ARTIGOS ==========
     elif data == "buscar_artigos":
         if not pode_usar_recurso(call.from_user.id, "busca"):
             bot.send_message(call.message.chat.id, "🔒 Limite de buscas científicas atingido. Consulte /planos para ampliar.")
@@ -845,6 +883,7 @@ _______________________________________
             {"$set": {"status": novo_status, "data_alta": datetime.now() if novo_status == "alta" else None}}
         )
         bot.send_message(call.message.chat.id, f"✅ Status de {nome} alterado para {novo_status.upper()}.")
+        # Volta ao submenu do paciente
         callback_query(types.CallbackQuery(id=call.id, from_user=call.from_user, message=call.message, data=f"paciente_{nome}"))
 
     elif data == "evolucao_diaria":
@@ -933,16 +972,14 @@ def processar_busca_cientifica(message):
         bot.send_message(message.chat.id, "Por favor, informe um termo válido.")
         return
 
-    # Envia mensagem de aguarde
     aguarde = bot.send_message(message.chat.id, "🔍 Buscando evidências em PubMed, SciELO e LILACS...\nIsso pode levar alguns segundos.")
 
-    # Busca artigos
     artigos = buscar_todas_fontes(query)
     if not artigos:
         bot.edit_message_text("Nenhum artigo encontrado.", chat_id=message.chat.id, message_id=aguarde.message_id)
         return
 
-    # Monta a mensagem com os artigos e links
+    # Monta mensagem com os artigos e links
     texto = f"*📚 Evidências para: {query}*\n\n"
     for i, art in enumerate(artigos, 1):
         texto += f"*{i}. {art['titulo']}*\n"
@@ -951,10 +988,9 @@ def processar_busca_cientifica(message):
         if art['link']:
             texto += f"🔗 [Ler artigo completo]({art['link']})\n"
         texto += "\n"
-
-    # Limita tamanho da mensagem
-    if len(texto) > 4000:
-        texto = texto[:3900] + "\n\n... (conteúdo truncado)"
+        if len(texto) > 3800:  # limite do Telegram
+            texto += "\n... (mais artigos não listados)"
+            break
 
     bot.edit_message_text(texto, chat_id=message.chat.id, message_id=aguarde.message_id, parse_mode='Markdown', disable_web_page_preview=True)
 

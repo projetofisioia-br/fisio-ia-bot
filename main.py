@@ -1,5 +1,5 @@
 # =================================================================
-# BLOCO 1 - IMPORTS, CONFIGURAÇÕES, BANCO E DASHBOARDS
+# BLOCO 1 - IMPORTS, CONFIGURAÇÕES, BANCO, FUNÇÕES AUXILIARES E DASHBOARDS
 # =================================================================
 
 import os
@@ -61,6 +61,7 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
         if codigo_indicador:
             indicador = uso_coll.find_one({"codigo_indicacao": codigo_indicador})
             if indicador and indicador["user_id"] != user_id:
+                # Adiciona 25% de crédito ao indicador
                 novo_credito = indicador.get("creditos_desconto", 0) + 25
                 uso_coll.update_one(
                     {"_id": indicador["_id"]},
@@ -81,6 +82,7 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
             "uso": 0,
             "criado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "pro": False,
+            "plano": "gratuito",   # novo campo
             "nome_profissional": "",
             "registro_profissional": "",
             "codigo_indicacao": gerar_codigo_indicacao(),
@@ -98,36 +100,69 @@ def verificar_assinatura(user):
     if user.get("pro"):
         expira = user.get("pro_expira_em", 0)
         if time.time() > expira:
-            uso_coll.update_one({"_id": user["_id"]}, {"$set": {"pro": False}})
+            uso_coll.update_one({"_id": user["_id"]}, {"$set": {"pro": False, "plano": "gratuito"}})
             return False
         return True
     return False
 
-def pode_usar(user_id):
+def obter_limites_plano(plano):
+    """Retorna limites mensais conforme plano"""
+    planos = {
+        "gratuito": {"analises": 5, "laudos": 3, "pacientes": 10, "pubmed_busca": 5},
+        "prata": {"analises": 30, "laudos": 30, "pacientes": 100, "pubmed_busca": 30},
+        "ouro": {"analises": 60, "laudos": 60, "pacientes": 300, "pubmed_busca": 60},
+        "diamante": {"analises": 300, "laudos": 300, "pacientes": 1000, "pubmed_busca": 300}
+    }
+    return planos.get(plano, planos["gratuito"])
+
+def pode_usar_recurso(user_id, recurso):
+    """Verifica limites mensais do plano"""
     if is_admin(user_id):
         return True
 
     user = uso_coll.find_one({"user_id": user_id})
     if not user:
         registrar_usuario_se_novo(user_id)
-        return True
+        user = uso_coll.find_one({"user_id": user_id})
 
-    if verificar_assinatura(user):
-        return True
+    # Se tem assinatura PRO, usa o plano ativo
+    plano = user.get("plano", "gratuito") if user.get("pro") else "gratuito"
+    limites = obter_limites_plano(plano)
 
-    uso_atual = user.get("uso", 0)
-    LIMITE_GRATUITO = 5
-    if uso_atual >= LIMITE_GRATUITO:
-        return False
+    hoje = datetime.now()
+    ultimo_reset = user.get("ultimo_reset")
+    if not ultimo_reset or hoje > ultimo_reset + timedelta(days=30):
+        # Resetar contadores
+        uso_coll.update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "uso_mes": 0,
+                "laudos_mes": 0,
+                "buscas_pubmed_mes": 0,
+                "ultimo_reset": hoje
+            }}
+        )
+        user["uso_mes"] = 0
+        user["laudos_mes"] = 0
+        user["buscas_pubmed_mes"] = 0
 
-    uso_coll.update_one({"_id": user["_id"]}, {"$inc": {"uso": 1}})
-    if (uso_atual + 1) >= LIMITE_GRATUITO and ADMIN_ID:
-        try:
-            bot = telebot.TeleBot(TOKEN_TELEGRAM)
-            bot.send_message(ADMIN_ID, f"⚠️ Usuário atingiu limite: ID {user_id}")
-        except:
-            pass
+    if recurso == "analise":
+        if user.get("uso_mes", 0) >= limites["analises"]:
+            return False
+        uso_coll.update_one({"_id": user["_id"]}, {"$inc": {"uso_mes": 1}})
+    elif recurso == "laudo":
+        if user.get("laudos_mes", 0) >= limites["laudos"]:
+            return False
+        uso_coll.update_one({"_id": user["_id"]}, {"$inc": {"laudos_mes": 1}})
+    elif recurso == "pubmed":
+        if user.get("buscas_pubmed_mes", 0) >= limites["pubmed_busca"]:
+            return False
+        uso_coll.update_one({"_id": user["_id"]}, {"$inc": {"buscas_pubmed_mes": 1}})
     return True
+
+# Mantemos a função pode_usar antiga para compatibilidade com chamadas existentes
+def pode_usar(user_id):
+    return pode_usar_recurso(user_id, "analise")
 
 def extrair_texto_arquivo(file_bytes):
     try:
@@ -210,7 +245,8 @@ def profissional_dashboard():
     profissional = uso_coll.find_one({"user_id": user_id})
     if not profissional:
         return "Profissional não encontrado", 404
-    pacientes = list(pacientes_coll.find({"profissional_id": user_id}).sort("data", -1))
+    # Buscar todos os pacientes
+    pacientes = list(pacientes_coll.find({"profissional_id": user_id}).sort("criado_em", -1))
     return render_template_string(PROFISSIONAL_TEMPLATE,
                                   profissional=profissional,
                                   pacientes=pacientes,
@@ -228,7 +264,7 @@ ADMIN_TEMPLATE = """
 <h2>Últimos usuários</h2>
 <ul>
 {% for u in ultimos_usuarios %}
-    <li>ID: {{ u.user_id }} - Criado em: {{ u.criado_em }} - PRO: {{ u.pro }}</li>
+    <li>ID: {{ u.user_id }} - Criado em: {{ u.criado_em }} - Plano: {{ u.plano }} - PRO: {{ u.pro }}</li>
 {% endfor %}
 </ul>
 </body>
@@ -242,17 +278,19 @@ PROFISSIONAL_TEMPLATE = """
 <body>
 <h1>Olá, {{ profissional.nome_profissional or profissional.user_id }}</h1>
 <p>Registro: {{ profissional.registro_profissional or "Não informado" }}</p>
-<p>Status: 
-{% if profissional.user_id == admin_id %}ADMINISTRADOR (Acesso Total)
-{% elif profissional.pro %}PRO Ativo
-{% else %}Plano Gratuito ({{ profissional.uso }} de 5 usos)
+<p>Plano atual: 
+{% if profissional.user_id == admin_id %}ADMINISTRADOR
+{% elif profissional.plano == "prata" %}⭐ Prata (30 consultas/mês)
+{% elif profissional.plano == "ouro" %}🌟 Ouro (60 consultas/mês)
+{% elif profissional.plano == "diamante" %}💎 Diamante (300 consultas/mês)
+{% else %}🚀 Gratuito (5 consultas/mês)
 {% endif %}
 </p>
 
-<h2>Seus Pacientes</h2>
+<h2>Seus Pacientes ({{ pacientes|length }})</h2>
 <ul>
 {% for p in pacientes %}
-    <li><strong>{{ p.nome }}</strong> - Última análise: {{ p.data or "N/A" }} - Status: {{ p.status or "ativo" }}</li>
+    <li><strong>{{ p.nome }}</strong> - Status: {{ p.status or "ativo" }} - Criado: {{ p.criado_em or "N/A" }}</li>
 {% endfor %}
 </ul>
 </body>
@@ -264,16 +302,17 @@ def run_flask():
 
 flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
+# =================================================================
+# BLOCO 2 - BOT TELEGRAM, PROMPTS, HANDLERS E MENU
+# =================================================================
 
-# =================================================================
-# BLOCO 2 - BOT TELEGRAM, HANDLERS E PROMPTS
-# =================================================================
+from datetime import timedelta
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 user_state = {}
 
-# ================= PROMPT SISTEMA PRINCIPAL =================
-PROMPT_SISTEMA = """
+# ================= PROMPTS =================
+PROMPT_SISTEMA_COMPLETO = """
 Atue como um Fisioterapeuta PhD especialista em ortopedia, biomecânica, medicina esportiva, reabilitação funcional e raciocínio clínico avançado, com domínio de literatura científica e prática clínica baseada em evidências. Sua função é realizar análise clínica profunda, estruturada e aplicada, simulando o raciocínio de um especialista experiente.
 
 OBJETIVO:
@@ -303,23 +342,22 @@ REGRAS:
 - Pensar como clínico experiente
 """
 
-# ================= PROMPTS PARA LAUDOS =================
-PROMPTS_LAUDO = {
-    "clinico": "Gere um laudo clínico conciso e objetivo (máximo 1 página). Inclua: 1) Resumo do caso, 2) Diagnóstico principal, 3) Conduta terapêutica, 4) Prognóstico. Seja direto e evite repetições.",
-    "exercicios": "Gere um programa de exercícios terapêuticos detalhado, mas conciso (máximo 1 página). Liste: 1) Objetivos, 2) Exercícios (nome, execução, séries/repetições), 3) Frequência e cuidados.",
-    "evolucao": "Gere um relato de evolução clínica objetiva (máximo 1 página). Inclua: 1) Resumo da evolução, 2) Comparação com avaliação anterior, 3) Ajustes na conduta, 4) Metas.",
-    "atestado": "Gere um atestado médico profissional (máximo 1 página). Inclua: 1) Identificação do paciente, 2) Período de afastamento (se aplicável), 3) CID e justificativa, 4) Recomendações. Formato oficial.",
-    "tratamento": "Gere um plano de tratamento estruturado (máximo 1 página). Inclua: 1) Objetivos de curto/médio/longo prazo, 2) Modalidades terapêuticas, 3) Cronograma, 4) Critérios de alta.",
-    "convenio": "Gere um relatório para convênio (máximo 1 página). Inclua: 1) Diagnóstico, 2) Evolução, 3) Sessões realizadas, 4) Resultados alcançados, 5) Necessidade de continuidade.",
-    "biomecanica": "Gere uma análise biomecânica funcional (máximo 1 página). Inclua: 1) Análise de cadeia cinética, 2) Compensações observadas, 3) Estratégias de correção, 4) Exercícios específicos."
-}
+PROMPT_DUVIDA_TECNICA = """
+Atue como um Fisioterapeuta PhD. O profissional tem uma dúvida sobre uma condição específica. Forneça uma resposta direta e resumida, com foco em:
+1. Sugestão de anamnese direcionada
+2. Principais testes clínicos para diagnóstico
+3. Primeiras condutas seguras e baseadas em evidência
+4. Educação em Dor (explicações para o paciente)
+
+Seja objetivo, prático e evite aprofundamento excessivo.
+"""
 
 # ================= FUNÇÃO DE CHAMADA À IA =================
-def chamar_gemini(message, prompt, nome_paciente=None):
+def chamar_gemini(message, prompt, nome_paciente=None, tipo="analise"):
     if not is_admin(message.from_user.id):
         registrar_usuario_se_novo(message.from_user.id)
-        if not pode_usar(message.from_user.id):
-            bot.send_message(message.chat.id, "🚫 Limite de análises gratuitas atingido. Considere o plano PRO.")
+        if not pode_usar_recurso(message.from_user.id, tipo):
+            bot.send_message(message.chat.id, "🚫 Limite de análises gratuitas atingido. Considere um dos planos pagos.")
             return None
 
     aguarde = bot.send_message(message.chat.id, "🧠 Processando...")
@@ -340,7 +378,7 @@ def chamar_gemini(message, prompt, nome_paciente=None):
             print(res_data)
             return None
 
-        if nome_paciente:
+        if nome_paciente and tipo == "analise":
             pacientes_coll.update_one(
                 {"profissional_id": message.from_user.id, "nome": nome_paciente},
                 {"$set": {"ultima_analise": analise, "data": datetime.now().strftime("%d/%m/%Y")}},
@@ -429,19 +467,37 @@ def cmd_historico(message):
 
 @bot.message_handler(commands=['planos'])
 def cmd_planos(message):
-    bot.send_message(message.chat.id, "💎 **Planos disponíveis**\n\nGratuito: 5 análises por mês.\nPRO: acesso ilimitado, R$ 59,90/mês.\n\nPara assinar, use o botão 'Planos Pagos' no menu.", reply_markup=menu_principal())
+    texto = """
+💎 **Planos MestreFisio PhD**
+
+🚀 **Gratuito** – 5 análises/mês
+⭐ **Prata** – 30 análises/mês – R$ 49,90/mês
+🌟 **Ouro** – 60 análises/mês – R$ 69,90/mês
+💎 **Diamante** – 300 análises/mês – R$ 99,90/mês
+
+✅ Todos os planos incluem:
+• Laudos e atestados personalizados
+• Memória clínica inteligente
+• Integração com PubMed
+• Suporte prioritário
+
+🎁 **Indicação premiada**: Indique um colega e ganhe 25% de desconto na próxima mensalidade (acumulável até 50%). O colega indicado também ganha 25% de desconto no primeiro mês!
+
+Use o botão "Planos Pagos" no menu para assinar.
+"""
+    bot.send_message(message.chat.id, texto, parse_mode='Markdown', reply_markup=menu_principal())
 
 @bot.message_handler(commands=['ajuda'])
 def cmd_ajuda(message):
     ajuda_texto = """
 📘 **Ajuda – MestreFisio V5.0**
 
-🔹 *Novo Paciente* – Cadastre um paciente e faça a primeira análise.
+🔹 *Novo Paciente* – Cadastre um paciente e faça a primeira análise (resumo do caso, prognóstico e condutas iniciais).
 🔹 *Pacientes* – Veja lista, histórico, evolua ou gere laudos.
-🔹 *Dúvida Técnica* – Tire dúvidas clínicas diretamente com a IA.
+🔹 *Dúvida Técnica* – Tire dúvidas clínicas rapidamente (anamnese, testes, condutas seguras e educação em dor).
 🔹 *Analisar Laudo* – Envie imagem/PDF de laudos médicos para interpretação.
 🔹 *Gerar Laudo/Atestado* – Escolha paciente e tipo de documento para emitir.
-🔹 *Planos Pagos* – Assine o plano PRO com acesso ilimitado.
+🔹 *Planos Pagos* – Assine um dos planos (Prata, Ouro, Diamante) com acesso ampliado.
 🔹 *Dashboard* – Acesse seu painel profissional online.
 🔹 *Indique um colega* – Ganhe descontos ao indicar outros profissionais.
 
@@ -462,7 +518,7 @@ def cmd_consulta(message):
 @bot.message_handler(commands=['dashboard'])
 def cmd_dashboard(message):
     user_id = message.from_user.id
-    dominio = "https://fisio-ia-bot-1.onrender.com"
+    dominio = "https://fisio-ia-bot-1.onrender.com"  # Substitua pelo seu domínio
     link_prof = f"{dominio}/profissional?user_id={user_id}"
     bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link_prof}")
     if is_admin(user_id):
@@ -477,18 +533,24 @@ def cmd_indicar(message):
         user = uso_coll.find_one({"user_id": message.from_user.id})
     codigo = user.get("codigo_indicacao")
     texto_convite = (
-        f"🎁 *Convide um colega e ganhe descontos!*\n\n"
+        f"🎁 *Convide um colega e ambos ganham!*\n\n"
         f"Compartilhe o link abaixo com profissionais da área. "
-        f"Cada novo cadastro com seu código lhe dá **25% de desconto** na próxima mensalidade. "
-        f"O desconto pode acumular até 50% por mês, e o saldo não utilizado fica para meses futuros.\n\n"
+        f"Cada novo cadastro com seu código lhe dá **25% de desconto** na próxima mensalidade "
+        f"(acumulável até 50%). O colega indicado também ganha **25% de desconto no primeiro mês**!\n\n"
         f"🔗 Link de indicação:\n"
         f"`https://t.me/{bot.get_me().username}?start={codigo}`\n\n"
+        f"🌟 **Benefícios do MestreFisio:**\n"
+        f"• Análises clínicas profundas\n"
+        f"• Laudos e atestados personalizados\n"
+        f"• Memória clínica inteligente\n"
+        f"• Integração com PubMed\n"
+        f"• Análise de exames por imagem\n\n"
         f"Quanto mais indicar, mais desconto! 🚀"
     )
     bot.send_message(message.chat.id, texto_convite, parse_mode='Markdown')
 
 # =================================================================
-# BLOCO 3 - CALLBACKS E FLUXOS PRINCIPAIS
+# BLOCO 3 - CALLBACKS PRINCIPAIS E FLUXOS
 # =================================================================
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -549,9 +611,10 @@ def callback_query(call):
         registro = profissional.get("registro_profissional", "")
         especialidade = "Fisioterapeuta PhD Especialista em Ortopedia e Biomecânica"
 
+        # Prompt específico para laudos
         prompt_laudo = PROMPTS_LAUDO.get(tipo, PROMPTS_LAUDO["clinico"])
         prompt = f"""
-{PROMPT_SISTEMA}
+{PROMPT_SISTEMA_COMPLETO}
 
 Paciente: {nome}
 
@@ -562,7 +625,7 @@ Histórico clínico completo:
 
 Finalize com assinatura profissional.
 """
-        analise = chamar_gemini(call.message, prompt, nome)
+        analise = chamar_gemini(call.message, prompt, nome, tipo="laudo")
         if analise:
             texto_final = f"""Paciente: {nome}
 
@@ -632,15 +695,15 @@ _______________________________________
         elif ordem == "za":
             pacientes.sort(key=lambda x: x['nome'], reverse=True)
         elif ordem == "recente":
-            pacientes.sort(key=lambda x: x.get('data', ''), reverse=True)
+            pacientes.sort(key=lambda x: x.get('criado_em', ''), reverse=True)
         elif ordem == "antigo":
-            pacientes.sort(key=lambda x: x.get('data', ''))
+            pacientes.sort(key=lambda x: x.get('criado_em', ''))
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         for p in pacientes:
             status_emoji = "🟢" if p.get("status", "ativo") == "ativo" else "🔴"
-            data_consulta = p.get('data', 'N/A')
-            markup.add(types.InlineKeyboardButton(f"{status_emoji} {p['nome']} ({data_consulta})", callback_data=f"paciente_{p['nome']}"))
+            data_criacao = p.get('criado_em', 'N/A')
+            markup.add(types.InlineKeyboardButton(f"{status_emoji} {p['nome']} ({data_criacao})", callback_data=f"paciente_{p['nome']}"))
         
         markup.add(types.InlineKeyboardButton("🔙 Voltar aos filtros", callback_data="pacientes"))
         bot.send_message(call.message.chat.id, "👥 Selecione o paciente:", reply_markup=markup)
@@ -679,6 +742,7 @@ _______________________________________
             {"$set": {"status": novo_status, "data_alta": datetime.now() if novo_status == "alta" else None}}
         )
         bot.send_message(call.message.chat.id, f"✅ Status de {nome} alterado para {novo_status.upper()}.")
+        # Retorna ao submenu do paciente
         callback_query(types.CallbackQuery(id=call.id, from_user=call.from_user, message=call.message, data=f"paciente_{nome}"))
 
     elif data == "evolucao_diaria":
@@ -692,8 +756,19 @@ _______________________________________
             return
         paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
         memoria = montar_memoria_clinica(paciente)
-        prompt = f"{PROMPT_SISTEMA}\n\nPACIENTE: {nome}\nHISTÓRICO:\n{memoria}\n\nFaça uma análise resumida do caso atual e sugira próximas condutas."
-        chamar_gemini(call.message, prompt, nome)
+        # Prompt para nova análise (resumida, igual ao que era usado em "Novo Paciente")
+        prompt = f"""
+{PROMPT_SISTEMA_COMPLETO}
+
+PACIENTE: {nome}
+HISTÓRICO PRÉVIO: {memoria}
+
+Sua tarefa é fornecer uma análise resumida para acompanhamento do caso:
+1. RESUMO DO CASO (evolução)
+2. PROGNÓSTICO ATUAL
+3. CONDUTAS SUGERIDAS (bloco exclusivo)
+"""
+        chamar_gemini(call.message, prompt, nome, tipo="analise")
 
     elif data.startswith("pdf_"):
         nome = data.split("_")[1]
@@ -715,16 +790,29 @@ _______________________________________
         bot.send_message(call.message.chat.id, f"📊 MÉTRICAS\n\n👥 Usuários: {total_usuarios}\n🧾 Pacientes: {total_pacientes}\n🧠 Análises: {total_analises}")
 
     elif data == "planos":
+        # Enviar invoice com opção de escolher plano
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("⭐ Prata - R$49,90/mês", callback_data="assinar_prata"),
+            types.InlineKeyboardButton("🌟 Ouro - R$69,90/mês", callback_data="assinar_ouro"),
+            types.InlineKeyboardButton("💎 Diamante - R$99,90/mês", callback_data="assinar_diamante")
+        )
+        bot.send_message(call.message.chat.id, "Escolha o plano desejado:", reply_markup=markup)
+
+    elif data.startswith("assinar_"):
+        plano = data.split("_")[1]
+        precos = {"prata": 4990, "ouro": 6990, "diamante": 9990}
+        titulos = {"prata": "Plano Prata", "ouro": "Plano Ouro", "diamante": "Plano Diamante"}
         try:
             bot.send_invoice(
                 chat_id=call.message.chat.id,
-                title="MestreFisio PhD Pro 💎",
-                description="Acesso ilimitado às análises.",
+                title=f"MestreFisio PhD - {titulos[plano]}",
+                description=f"Acesso a {obter_limites_plano(plano)['analises']} análises mensais.",
                 provider_token=TOKEN_PAYMENT,
                 currency="BRL",
-                prices=[types.LabeledPrice("Assinatura Pro", 5990)],
-                invoice_payload="pro_access",
-                start_parameter="pro_access"
+                prices=[types.LabeledPrice("Assinatura mensal", precos[plano])],
+                invoice_payload=f"plano_{plano}",
+                start_parameter=f"plano_{plano}"
             )
         except Exception as e:
             bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
@@ -756,25 +844,26 @@ def obter_nome_paciente(message):
 def processar_ia_paciente(message, nome):
     paciente = pacientes_coll.find_one({"profissional_id": message.from_user.id, "nome": nome}) or {}
     memoria = montar_memoria_clinica(paciente)
+    # Prompt específico para novo paciente (resumo, prognóstico, condutas)
     prompt = f"""
-{PROMPT_SISTEMA}
+{PROMPT_SISTEMA_COMPLETO}
 
 PACIENTE: {nome}
-HISTÓRICO PRÉVIO: {memoria}
-DADO ATUAL: {message.text}
+INFORMAÇÕES CLÍNICAS: {message.text}
 
-Sua tarefa é fornecer uma NOVA ANÁLISE RESUMIDA:
-1. RESUMO DO CASO: (Máximo 5 linhas sobre o estado atual).
-2. EVOLUÇÃO: (O que melhorou ou piorou comparado ao histórico).
-3. SUGESTÕES DE PRÓXIMAS CONDUTAS: (Liste 3 condutas práticas e imediatas).
+Sua tarefa é fornecer uma análise para este novo paciente:
+1. RESUMO DO CASO (com base nas informações fornecidas)
+2. PROGNÓSTICO (expectativa de evolução)
+3. CONDUTAS SUGERIDAS (bloco exclusivo)
 
-Seja direto, técnico e evite repetições desnecessárias.
+Seja direto, técnico e estruture a resposta em tópicos.
 """
-    chamar_gemini(message, prompt, nome)
+    chamar_gemini(message, prompt, nome, tipo="analise")
 
 def processar_ia_direta(message):
-    prompt = f"{PROMPT_SISTEMA}\n\n{message.text}"
-    chamar_gemini(message, prompt)
+    # Usa o prompt de dúvida técnica (resumido)
+    prompt = f"{PROMPT_DUVIDA_TECNICA}\n\nPergunta: {message.text}"
+    chamar_gemini(message, prompt, tipo="analise")
 
 def receber_evolucao(message):
     nome = user_state.get(message.from_user.id, {}).get("paciente")
@@ -790,8 +879,20 @@ def receber_evolucao(message):
     bot.send_message(message.chat.id, f"✅ Evolução registrada em {data_hora}.")
     paciente = pacientes_coll.find_one({"profissional_id": message.from_user.id, "nome": nome})
     memoria = montar_memoria_clinica(paciente)
-    prompt = f"{PROMPT_SISTEMA}\n\nPaciente: {nome}\nHistórico:\n{memoria}\nNova evolução: {message.text}\n\nFaça uma análise resumida e sugestões."
-    chamar_gemini(message, prompt, nome)
+    prompt = f"""
+{PROMPT_SISTEMA_COMPLETO}
+
+Paciente: {nome}
+Histórico:
+{memoria}
+Nova evolução: {message.text}
+
+Forneça uma análise resumida considerando essa evolução:
+1. EVOLUÇÃO CLÍNICA
+2. AJUSTES NA CONDUTA
+3. PRÓXIMOS PASSOS
+"""
+    chamar_gemini(message, prompt, nome, tipo="analise")
 
 @bot.message_handler(content_types=['photo', 'document'])
 def receber_arquivo(message):
@@ -809,8 +910,8 @@ def receber_arquivo(message):
         if not texto:
             bot.send_message(message.chat.id, "❌ Não foi possível extrair texto do laudo.")
             return
-        prompt = f"{PROMPT_SISTEMA}\n\nAnalise o seguinte laudo médico:\n\n{texto}"
-        chamar_gemini(message, prompt)
+        prompt = f"{PROMPT_SISTEMA_COMPLETO}\n\nAnalise o seguinte laudo médico:\n\n{texto}"
+        chamar_gemini(message, prompt, tipo="analise")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Erro: {str(e)}")
     finally:
@@ -823,20 +924,36 @@ def process_pre_checkout_query(pre_checkout_query):
 @bot.message_handler(content_types=['successful_payment'])
 def pagamento_sucesso(message):
     user_id = message.from_user.id
+    payload = message.successful_payment.invoice_payload
+    plano = payload.split("_")[1] if payload.startswith("plano_") else "prata"
+
     user = uso_coll.find_one({"user_id": user_id})
+    # Aplica desconto acumulado
     desconto = user.get("creditos_desconto", 0)
-    valor_final = 5990
+    valor_original = {"prata": 4990, "ouro": 6990, "diamante": 9990}[plano]
     if desconto > 0:
         desconto_aplicado = min(desconto, 50)
-        valor_final = int(valor_final * (1 - desconto_aplicado/100))
+        valor_pago = int(valor_original * (1 - desconto_aplicado/100))
+        # Zera o saldo de desconto após aplicar
         uso_coll.update_one({"_id": user["_id"]}, {"$set": {"creditos_desconto": 0}})
-        bot.send_message(message.chat.id, f"🎉 Desconto de {desconto_aplicado}% aplicado! Valor pago: R$ {valor_final/100:.2f}")
+        bot.send_message(message.chat.id, f"🎉 Desconto de {desconto_aplicado}% aplicado! Valor pago: R$ {valor_pago/100:.2f}")
+
+    # Ativa o plano
     uso_coll.update_one(
         {"user_id": user_id},
-        {"$set": {"pro": True, "pro_expira_em": time.time() + 30*24*60*60}},
+        {"$set": {
+            "pro": True,
+            "plano": plano,
+            "pro_expira_em": time.time() + 30*24*60*60,
+            "uso_mes": 0,
+            "laudos_mes": 0,
+            "buscas_pubmed_mes": 0,
+            "ultimo_reset": datetime.now()
+        }},
         upsert=True
     )
-    bot.send_message(message.chat.id, "💎 Pagamento aprovado! Plano PRO ativo por 30 dias 🚀")
+    limites = obter_limites_plano(plano)
+    bot.send_message(message.chat.id, f"💎 Pagamento aprovado! Plano {plano.capitalize()} ativo por 30 dias 🚀\n\n✅ {limites['analises']} análises/mês\n✅ {limites['laudos']} laudos/mês\n✅ {limites['pacientes']} pacientes")
 
 # ================= EXECUÇÃO =================
 if __name__ == "__main__":

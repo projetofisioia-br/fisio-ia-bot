@@ -1,5 +1,5 @@
 # =================================================================
-# BLOCO 1 - IMPORTS, CONFIGURAÇÕES, BANCO, FUNÇÕES AUXILIARES E DASHBOARDS
+# BLOCO 1 - IMPORTS, CONFIGURAÇÕES, BANCO, FUNÇÕES AUXILIARES E BUSCAS
 # =================================================================
 
 import os
@@ -8,7 +8,7 @@ import time
 import threading
 import random
 import string
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytesseract
 from PIL import Image
@@ -30,7 +30,6 @@ MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0") or 0)
 
-# Validações
 if not TOKEN_TELEGRAM:
     raise ValueError("TOKEN_TELEGRAM não definido")
 if not MONGO_URI:
@@ -50,7 +49,6 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 def gerar_codigo_indicacao():
-    """Gera um código único de 6 caracteres alfanuméricos"""
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 def registrar_usuario_se_novo(user_id, codigo_indicador=None):
@@ -61,16 +59,9 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
         if codigo_indicador:
             indicador = uso_coll.find_one({"codigo_indicacao": codigo_indicador})
             if indicador and indicador["user_id"] != user_id:
-                # Adiciona 25% de crédito ao indicador
                 novo_credito = indicador.get("creditos_desconto", 0) + 25
-                uso_coll.update_one(
-                    {"_id": indicador["_id"]},
-                    {"$set": {"creditos_desconto": novo_credito}}
-                )
-                uso_coll.update_one(
-                    {"_id": indicador["_id"]},
-                    {"$push": {"indicacoes": {"user_id": user_id, "data": datetime.now()}}}
-                )
+                uso_coll.update_one({"_id": indicador["_id"]}, {"$set": {"creditos_desconto": novo_credito}})
+                uso_coll.update_one({"_id": indicador["_id"]}, {"$push": {"indicacoes": {"user_id": user_id, "data": datetime.now()}}})
                 try:
                     bot = telebot.TeleBot(TOKEN_TELEGRAM)
                     bot.send_message(indicador["user_id"], f"🎉 Parabéns! Um novo profissional se cadastrou usando seu código. Você ganhou +25% de desconto na próxima mensalidade! Seu saldo atual: {novo_credito}%")
@@ -80,9 +71,10 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
         uso_coll.insert_one({
             "user_id": user_id,
             "uso": 0,
+            "uso_buscas": 0,               # contador de buscas científicas
             "criado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "pro": False,
-            "plano": "gratuito",   # novo campo
+            "plano": "gratuito",
             "nome_profissional": "",
             "registro_profissional": "",
             "codigo_indicacao": gerar_codigo_indicacao(),
@@ -106,17 +98,15 @@ def verificar_assinatura(user):
     return False
 
 def obter_limites_plano(plano):
-    """Retorna limites mensais conforme plano"""
     planos = {
-        "gratuito": {"analises": 5, "laudos": 3, "pacientes": 10, "pubmed_busca": 5},
-        "prata": {"analises": 30, "laudos": 30, "pacientes": 100, "pubmed_busca": 30},
-        "ouro": {"analises": 60, "laudos": 60, "pacientes": 300, "pubmed_busca": 60},
-        "diamante": {"analises": 300, "laudos": 300, "pacientes": 1000, "pubmed_busca": 300}
+        "gratuito": {"analises": 5, "laudos": 3, "pacientes": 10, "buscas": 5},
+        "prata": {"analises": 30, "laudos": 30, "pacientes": 100, "buscas": 30},
+        "ouro": {"analises": 60, "laudos": 60, "pacientes": 300, "buscas": 60},
+        "diamante": {"analises": 300, "laudos": 300, "pacientes": 1000, "buscas": 300}
     }
     return planos.get(plano, planos["gratuito"])
 
 def pode_usar_recurso(user_id, recurso):
-    """Verifica limites mensais do plano"""
     if is_admin(user_id):
         return True
 
@@ -125,26 +115,24 @@ def pode_usar_recurso(user_id, recurso):
         registrar_usuario_se_novo(user_id)
         user = uso_coll.find_one({"user_id": user_id})
 
-    # Se tem assinatura PRO, usa o plano ativo
     plano = user.get("plano", "gratuito") if user.get("pro") else "gratuito"
     limites = obter_limites_plano(plano)
 
     hoje = datetime.now()
     ultimo_reset = user.get("ultimo_reset")
     if not ultimo_reset or hoje > ultimo_reset + timedelta(days=30):
-        # Resetar contadores
         uso_coll.update_one(
             {"_id": user["_id"]},
             {"$set": {
                 "uso_mes": 0,
                 "laudos_mes": 0,
-                "buscas_pubmed_mes": 0,
+                "uso_buscas": 0,
                 "ultimo_reset": hoje
             }}
         )
         user["uso_mes"] = 0
         user["laudos_mes"] = 0
-        user["buscas_pubmed_mes"] = 0
+        user["uso_buscas"] = 0
 
     if recurso == "analise":
         if user.get("uso_mes", 0) >= limites["analises"]:
@@ -154,13 +142,12 @@ def pode_usar_recurso(user_id, recurso):
         if user.get("laudos_mes", 0) >= limites["laudos"]:
             return False
         uso_coll.update_one({"_id": user["_id"]}, {"$inc": {"laudos_mes": 1}})
-    elif recurso == "pubmed":
-        if user.get("buscas_pubmed_mes", 0) >= limites["pubmed_busca"]:
+    elif recurso == "busca":
+        if user.get("uso_buscas", 0) >= limites["buscas"]:
             return False
-        uso_coll.update_one({"_id": user["_id"]}, {"$inc": {"buscas_pubmed_mes": 1}})
+        uso_coll.update_one({"_id": user["_id"]}, {"$inc": {"uso_buscas": 1}})
     return True
 
-# Mantemos a função pode_usar antiga para compatibilidade com chamadas existentes
 def pode_usar(user_id):
     return pode_usar_recurso(user_id, "analise")
 
@@ -211,7 +198,121 @@ def gerar_pdf(nome_paciente, texto_analise):
     buffer.seek(0)
     return buffer
 
-# ================= SERVIDOR FLASK (DASHBOARDS) =================
+# ================= BUSCAS CIENTÍFICAS =================
+from pymed import PubMed
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+pubmed = PubMed(tool="MestreFisio", email="pesquisador@exemplo.com")  # substitua pelo seu email
+
+def buscar_pubmed(query, max_results=5):
+    try:
+        resultados = pubmed.query(query, max_results=max_results)
+        artigos = []
+        for artigo in resultados:
+            if artigo.abstract:
+                artigos.append({
+                    "fonte": "PubMed",
+                    "titulo": artigo.title,
+                    "resumo": artigo.abstract[:800],
+                    "link": f"https://pubmed.ncbi.nlm.nih.gov/{artigo.pubmed_id}/" if artigo.pubmed_id else ""
+                })
+        return artigos
+    except Exception as e:
+        print(f"Erro PubMed: {e}")
+        return []
+
+def buscar_scielo(query, max_results=5):
+    try:
+        # API SciELO: http://api.scielo.org
+        url = f"http://api.scielo.org/search/?q={urllib.parse.quote(query)}&lang=pt&limit={max_results}"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            artigos = []
+            for item in data.get("response", {}).get("docs", []):
+                artigos.append({
+                    "fonte": "SciELO",
+                    "titulo": item.get("title", "Sem título"),
+                    "resumo": item.get("abstract", "Resumo não disponível.")[:800],
+                    "link": item.get("url", "")
+                })
+            return artigos
+        return []
+    except Exception as e:
+        print(f"Erro SciELO: {e}")
+        return []
+
+def buscar_lilacs(query, max_results=5):
+    try:
+        # BVS API (LILACS)
+        url = "https://pesquisa.bvsalud.org/portal/api/es/search"
+        params = {
+            "q": query,
+            "lang": "pt",
+            "count": max_results,
+            "collection": "LILACS"
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            artigos = []
+            for doc in data.get("documents", []):
+                artigos.append({
+                    "fonte": "LILACS",
+                    "titulo": doc.get("title", "Sem título"),
+                    "resumo": doc.get("abstract", "Resumo não disponível.")[:800],
+                    "link": doc.get("url", "")
+                })
+            return artigos
+        return []
+    except Exception as e:
+        print(f"Erro LILACS: {e}")
+        return []
+
+def buscar_todas_fontes(query):
+    """Consulta PubMed, SciELO e LILACS e retorna lista unificada"""
+    pubmed = buscar_pubmed(query, max_results=3)
+    scielo = buscar_scielo(query, max_results=3)
+    lilacs = buscar_lilacs(query, max_results=3)
+    todos = pubmed + scielo + lilacs
+    # Remove duplicatas por título (simples)
+    vistos = set()
+    unicos = []
+    for art in todos:
+        titulo = art["titulo"].lower()
+        if titulo not in vistos:
+            vistos.add(titulo)
+            unicos.append(art)
+    return unicos[:7]  # máximo 7 artigos
+
+def sintetizar_artigos_com_ia(query, artigos):
+    """Usa a IA para gerar um resumo dos artigos encontrados"""
+    if not artigos:
+        return "Nenhum artigo encontrado."
+    texto_artigos = "\n\n".join([f"Fonte: {a['fonte']}\nTítulo: {a['titulo']}\nResumo: {a['resumo']}" for a in artigos])
+    prompt = f"""
+Você é um especialista em síntese de evidências científicas. Com base nos artigos abaixo sobre "{query}", crie um resumo conciso destacando os principais achados, consensos e lacunas. Seja objetivo, em português.
+
+Artigos:
+{texto_artigos}
+
+Síntese:
+"""
+    # Chamada à IA
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO}:generateContent?key={API_KEY_IA}"
+    try:
+        response = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
+        if response.status_code == 200:
+            res_data = response.json()
+            return res_data['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return "Não foi possível gerar síntese."
+    except Exception as e:
+        print(f"Erro síntese IA: {e}")
+        return "Erro ao gerar síntese."
+
+# ================= SERVIDOR FLASK =================
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "chave_secreta_temporaria")
 
@@ -224,13 +325,11 @@ def admin_dashboard():
     user_id = request.args.get('user_id')
     if not user_id or not is_admin(int(user_id)):
         return "Acesso negado", 403
-
     total_usuarios = uso_coll.count_documents({})
     total_pacientes = pacientes_coll.count_documents({})
     total_analises = logs_coll.count_documents({})
     ultimos_usuarios = list(uso_coll.find().sort("_id", -1).limit(10))
-
-    return render_template_string(ADMIN_TEMPLATE, 
+    return render_template_string(ADMIN_TEMPLATE,
                                   total_usuarios=total_usuarios,
                                   total_pacientes=total_pacientes,
                                   total_analises=total_analises,
@@ -245,7 +344,6 @@ def profissional_dashboard():
     profissional = uso_coll.find_one({"user_id": user_id})
     if not profissional:
         return "Profissional não encontrado", 404
-    # Buscar todos os pacientes
     pacientes = list(pacientes_coll.find({"profissional_id": user_id}).sort("criado_em", -1))
     return render_template_string(PROFISSIONAL_TEMPLATE,
                                   profissional=profissional,
@@ -254,8 +352,7 @@ def profissional_dashboard():
 
 ADMIN_TEMPLATE = """
 <!DOCTYPE html>
-<html>
-<head><title>Dashboard Admin</title></head>
+<html><head><title>Dashboard Admin</title></head>
 <body>
 <h1>Painel Administrativo</h1>
 <p>Total usuários: {{ total_usuarios }}</p>
@@ -264,7 +361,7 @@ ADMIN_TEMPLATE = """
 <h2>Últimos usuários</h2>
 <ul>
 {% for u in ultimos_usuarios %}
-    <li>ID: {{ u.user_id }} - Criado em: {{ u.criado_em }} - Plano: {{ u.plano }} - PRO: {{ u.pro }}</li>
+    <li>ID: {{ u.user_id }} - Plano: {{ u.plano }} - PRO: {{ u.pro }}</li>
 {% endfor %}
 </ul>
 </body>
@@ -273,12 +370,11 @@ ADMIN_TEMPLATE = """
 
 PROFISSIONAL_TEMPLATE = """
 <!DOCTYPE html>
-<html>
-<head><title>Dashboard Profissional</title></head>
+<html><head><title>Dashboard Profissional</title></head>
 <body>
 <h1>Olá, {{ profissional.nome_profissional or profissional.user_id }}</h1>
 <p>Registro: {{ profissional.registro_profissional or "Não informado" }}</p>
-<p>Plano atual: 
+<p>Plano atual:
 {% if profissional.user_id == admin_id %}ADMINISTRADOR
 {% elif profissional.plano == "prata" %}⭐ Prata (30 consultas/mês)
 {% elif profissional.plano == "ouro" %}🌟 Ouro (60 consultas/mês)
@@ -286,7 +382,6 @@ PROFISSIONAL_TEMPLATE = """
 {% else %}🚀 Gratuito (5 consultas/mês)
 {% endif %}
 </p>
-
 <h2>Seus Pacientes ({{ pacientes|length }})</h2>
 <ul>
 {% for p in pacientes %}
@@ -302,11 +397,10 @@ def run_flask():
 
 flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
-# =================================================================
-# BLOCO 2 - BOT TELEGRAM, PROMPTS, HANDLERS E MENU
-# =================================================================
 
-from datetime import timedelta
+# =================================================================
+# BLOCO 2 - BOT, PROMPTS, MENU PRINCIPAL, HANDLERS E COMANDOS
+# =================================================================
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 user_state = {}
@@ -411,6 +505,7 @@ def menu_principal():
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
         types.InlineKeyboardButton("📄 Gerar Laudo/Atestado", callback_data="gerar_laudo"),
+        types.InlineKeyboardButton("🔍 Buscar Artigos", callback_data="buscar_artigos"),  # NOVO
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos"),
         types.InlineKeyboardButton("🌐 Dashboard", callback_data="dashboard"),
         types.InlineKeyboardButton("🎁 Indique um colega", callback_data="indicar")
@@ -470,20 +565,18 @@ def cmd_planos(message):
     texto = """
 💎 **Planos MestreFisio PhD**
 
-🚀 **Gratuito** – 5 análises/mês
-⭐ **Prata** – 30 análises/mês – R$ 49,90/mês
-🌟 **Ouro** – 60 análises/mês – R$ 69,90/mês
-💎 **Diamante** – 300 análises/mês – R$ 99,90/mês
+🚀 **Gratuito** – 5 análises/mês | 5 buscas científicas/mês
+⭐ **Prata** – 30 análises/mês | 30 buscas – R$ 49,90/mês
+🌟 **Ouro** – 60 análises/mês | 60 buscas – R$ 69,90/mês
+💎 **Diamante** – 300 análises/mês | 300 buscas – R$ 99,90/mês
 
 ✅ Todos os planos incluem:
 • Laudos e atestados personalizados
 • Memória clínica inteligente
-• Integração com PubMed
+• Busca em PubMed, SciELO e LILACS
 • Suporte prioritário
 
 🎁 **Indicação premiada**: Indique um colega e ganhe 25% de desconto na próxima mensalidade (acumulável até 50%). O colega indicado também ganha 25% de desconto no primeiro mês!
-
-Use o botão "Planos Pagos" no menu para assinar.
 """
     bot.send_message(message.chat.id, texto, parse_mode='Markdown', reply_markup=menu_principal())
 
@@ -492,11 +585,12 @@ def cmd_ajuda(message):
     ajuda_texto = """
 📘 **Ajuda – MestreFisio V5.0**
 
-🔹 *Novo Paciente* – Cadastre um paciente e faça a primeira análise (resumo do caso, prognóstico e condutas iniciais).
+🔹 *Novo Paciente* – Cadastre um paciente e faça a primeira análise (resumo, prognóstico, condutas).
 🔹 *Pacientes* – Veja lista, histórico, evolua ou gere laudos.
 🔹 *Dúvida Técnica* – Tire dúvidas clínicas rapidamente (anamnese, testes, condutas seguras e educação em dor).
 🔹 *Analisar Laudo* – Envie imagem/PDF de laudos médicos para interpretação.
 🔹 *Gerar Laudo/Atestado* – Escolha paciente e tipo de documento para emitir.
+🔹 *Buscar Artigos* – Pesquise evidências em PubMed, SciELO e LILACS e receba uma síntese.
 🔹 *Planos Pagos* – Assine um dos planos (Prata, Ouro, Diamante) com acesso ampliado.
 🔹 *Dashboard* – Acesse seu painel profissional online.
 🔹 *Indique um colega* – Ganhe descontos ao indicar outros profissionais.
@@ -518,7 +612,7 @@ def cmd_consulta(message):
 @bot.message_handler(commands=['dashboard'])
 def cmd_dashboard(message):
     user_id = message.from_user.id
-    dominio = "https://fisio-ia-bot-1.onrender.com"  # Substitua pelo seu domínio
+    dominio = "https://seu-dominio.com"  # Substitua pelo seu domínio real
     link_prof = f"{dominio}/profissional?user_id={user_id}"
     bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link_prof}")
     if is_admin(user_id):
@@ -543,14 +637,15 @@ def cmd_indicar(message):
         f"• Análises clínicas profundas\n"
         f"• Laudos e atestados personalizados\n"
         f"• Memória clínica inteligente\n"
-        f"• Integração com PubMed\n"
+        f"• Busca em PubMed, SciELO e LILACS\n"
         f"• Análise de exames por imagem\n\n"
         f"Quanto mais indicar, mais desconto! 🚀"
     )
     bot.send_message(message.chat.id, texto_convite, parse_mode='Markdown')
 
+
 # =================================================================
-# BLOCO 3 - CALLBACKS PRINCIPAIS E FLUXOS
+# BLOCO 3 - CALLBACKS PRINCIPAIS E FLUXOS (COM BUSCA DE ARTIGOS)
 # =================================================================
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -652,6 +747,14 @@ _______________________________________
         else:
             bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
 
+    # ========== NOVO: BUSCAR ARTIGOS ==========
+    elif data == "buscar_artigos":
+        if not pode_usar_recurso(call.from_user.id, "busca"):
+            bot.send_message(call.message.chat.id, "🔒 Limite de buscas científicas atingido. Consulte /planos para ampliar.")
+            return
+        msg = bot.send_message(call.message.chat.id, "🔍 Digite o termo de busca (diagnóstico, condição, etc.) para pesquisar em PubMed, SciELO e LILACS:")
+        bot.register_next_step_handler(msg, processar_busca_cientifica)
+
     elif data == "pacientes":
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -742,7 +845,6 @@ _______________________________________
             {"$set": {"status": novo_status, "data_alta": datetime.now() if novo_status == "alta" else None}}
         )
         bot.send_message(call.message.chat.id, f"✅ Status de {nome} alterado para {novo_status.upper()}.")
-        # Retorna ao submenu do paciente
         callback_query(types.CallbackQuery(id=call.id, from_user=call.from_user, message=call.message, data=f"paciente_{nome}"))
 
     elif data == "evolucao_diaria":
@@ -756,7 +858,6 @@ _______________________________________
             return
         paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
         memoria = montar_memoria_clinica(paciente)
-        # Prompt para nova análise (resumida, igual ao que era usado em "Novo Paciente")
         prompt = f"""
 {PROMPT_SISTEMA_COMPLETO}
 
@@ -790,7 +891,6 @@ Sua tarefa é fornecer uma análise resumida para acompanhamento do caso:
         bot.send_message(call.message.chat.id, f"📊 MÉTRICAS\n\n👥 Usuários: {total_usuarios}\n🧾 Pacientes: {total_pacientes}\n🧠 Análises: {total_analises}")
 
     elif data == "planos":
-        # Enviar invoice com opção de escolher plano
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
             types.InlineKeyboardButton("⭐ Prata - R$49,90/mês", callback_data="assinar_prata"),
@@ -807,7 +907,7 @@ Sua tarefa é fornecer uma análise resumida para acompanhamento do caso:
             bot.send_invoice(
                 chat_id=call.message.chat.id,
                 title=f"MestreFisio PhD - {titulos[plano]}",
-                description=f"Acesso a {obter_limites_plano(plano)['analises']} análises mensais.",
+                description=f"Acesso a {obter_limites_plano(plano)['analises']} análises mensais e buscas científicas.",
                 provider_token=TOKEN_PAYMENT,
                 currency="BRL",
                 prices=[types.LabeledPrice("Assinatura mensal", precos[plano])],
@@ -825,6 +925,43 @@ Sua tarefa é fornecer uma análise resumida para acompanhamento do caso:
 
     else:
         bot.send_message(call.message.chat.id, f"⚠️ Comando não reconhecido.")
+
+# ================= FUNÇÃO PARA PROCESSAR BUSCA CIENTÍFICA =================
+def processar_busca_cientifica(message):
+    query = message.text.strip()
+    if not query:
+        bot.send_message(message.chat.id, "Por favor, informe um termo válido.")
+        return
+
+    # Envia mensagem de aguarde
+    aguarde = bot.send_message(message.chat.id, "🔍 Buscando evidências em PubMed, SciELO e LILACS...\nIsso pode levar alguns segundos.")
+
+    # Busca artigos
+    artigos = buscar_todas_fontes(query)
+    if not artigos:
+        bot.edit_message_text("Nenhum artigo encontrado.", chat_id=message.chat.id, message_id=aguarde.message_id)
+        return
+
+    # Monta a mensagem com os artigos e links
+    texto = f"*📚 Evidências para: {query}*\n\n"
+    for i, art in enumerate(artigos, 1):
+        texto += f"*{i}. {art['titulo']}*\n"
+        texto += f"📌 *Fonte:* {art['fonte']}\n"
+        texto += f"📄 {art['resumo'][:400]}...\n"
+        if art['link']:
+            texto += f"🔗 [Ler artigo completo]({art['link']})\n"
+        texto += "\n"
+
+    # Limita tamanho da mensagem
+    if len(texto) > 4000:
+        texto = texto[:3900] + "\n\n... (conteúdo truncado)"
+
+    bot.edit_message_text(texto, chat_id=message.chat.id, message_id=aguarde.message_id, parse_mode='Markdown', disable_web_page_preview=True)
+
+    # Gera síntese com IA
+    bot.send_message(message.chat.id, "🤖 Gerando síntese dos achados...")
+    sintese = sintetizar_artigos_com_ia(query, artigos)
+    bot.send_message(message.chat.id, f"📝 *Síntese das evidências:*\n\n{sintese}", parse_mode='Markdown')
 
 # =================================================================
 # BLOCO 4 - FUNÇÕES DE FLUXO, ARQUIVOS, PAGAMENTOS E EXECUÇÃO
@@ -844,7 +981,6 @@ def obter_nome_paciente(message):
 def processar_ia_paciente(message, nome):
     paciente = pacientes_coll.find_one({"profissional_id": message.from_user.id, "nome": nome}) or {}
     memoria = montar_memoria_clinica(paciente)
-    # Prompt específico para novo paciente (resumo, prognóstico, condutas)
     prompt = f"""
 {PROMPT_SISTEMA_COMPLETO}
 
@@ -861,7 +997,6 @@ Seja direto, técnico e estruture a resposta em tópicos.
     chamar_gemini(message, prompt, nome, tipo="analise")
 
 def processar_ia_direta(message):
-    # Usa o prompt de dúvida técnica (resumido)
     prompt = f"{PROMPT_DUVIDA_TECNICA}\n\nPergunta: {message.text}"
     chamar_gemini(message, prompt, tipo="analise")
 
@@ -928,17 +1063,14 @@ def pagamento_sucesso(message):
     plano = payload.split("_")[1] if payload.startswith("plano_") else "prata"
 
     user = uso_coll.find_one({"user_id": user_id})
-    # Aplica desconto acumulado
     desconto = user.get("creditos_desconto", 0)
     valor_original = {"prata": 4990, "ouro": 6990, "diamante": 9990}[plano]
     if desconto > 0:
         desconto_aplicado = min(desconto, 50)
         valor_pago = int(valor_original * (1 - desconto_aplicado/100))
-        # Zera o saldo de desconto após aplicar
         uso_coll.update_one({"_id": user["_id"]}, {"$set": {"creditos_desconto": 0}})
         bot.send_message(message.chat.id, f"🎉 Desconto de {desconto_aplicado}% aplicado! Valor pago: R$ {valor_pago/100:.2f}")
 
-    # Ativa o plano
     uso_coll.update_one(
         {"user_id": user_id},
         {"$set": {
@@ -947,13 +1079,13 @@ def pagamento_sucesso(message):
             "pro_expira_em": time.time() + 30*24*60*60,
             "uso_mes": 0,
             "laudos_mes": 0,
-            "buscas_pubmed_mes": 0,
+            "uso_buscas": 0,
             "ultimo_reset": datetime.now()
         }},
         upsert=True
     )
     limites = obter_limites_plano(plano)
-    bot.send_message(message.chat.id, f"💎 Pagamento aprovado! Plano {plano.capitalize()} ativo por 30 dias 🚀\n\n✅ {limites['analises']} análises/mês\n✅ {limites['laudos']} laudos/mês\n✅ {limites['pacientes']} pacientes")
+    bot.send_message(message.chat.id, f"💎 Pagamento aprovado! Plano {plano.capitalize()} ativo por 30 dias 🚀\n\n✅ {limites['analises']} análises/mês\n✅ {limites['laudos']} laudos/mês\n✅ {limites['buscas']} buscas científicas/mês")
 
 # ================= EXECUÇÃO =================
 if __name__ == "__main__":

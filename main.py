@@ -1,5 +1,5 @@
 # =================================================================
-# BLOCO 1 - INSTALAÇÃO DE DEPENDÊNCIAS, IMPORTS, CONFIGURAÇÕES, BANCO E BUSCAS
+# BLOCO 1 - IMPORTS, CONFIGURAÇÕES, BANCO E BUSCAS
 # =================================================================
 
 import subprocess
@@ -416,7 +416,7 @@ flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
 
 # =================================================================
-# BLOCO 2 - BOT, PROMPTS, MENU, HANDLERS E COMANDOS
+# BLOCO 2 - BOT, PROMPTS, MENU PRINCIPAL, HANDLERS E COMANDOS
 # =================================================================
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
@@ -531,7 +531,6 @@ def menu_principal():
         types.InlineKeyboardButton("👥 Pacientes", callback_data="pacientes"),
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
-        types.InlineKeyboardButton("📄 Gerar Laudo/Atestado", callback_data="gerar_laudo"),
         types.InlineKeyboardButton("🔍 Buscar Artigos", callback_data="buscar_artigos"),
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos"),
         types.InlineKeyboardButton("🌐 Dashboard", callback_data="dashboard"),
@@ -616,7 +615,6 @@ def cmd_ajuda(message):
 🔹 *Pacientes* – Veja lista, histórico, evolua ou gere laudos.
 🔹 *Dúvida Técnica* – Tire dúvidas clínicas rapidamente (anamnese, testes, condutas seguras e educação em dor).
 🔹 *Analisar Laudo* – Envie imagem/PDF de laudos médicos para interpretação.
-🔹 *Gerar Laudo/Atestado* – Escolha paciente e tipo de documento para emitir.
 🔹 *Buscar Artigos* – Pesquise evidências em PubMed, SciELO e LILACS e receba uma síntese.
 🔹 *Planos Pagos* – Assine um dos planos (Prata, Ouro, Diamante) com acesso ampliado.
 🔹 *Dashboard* – Acesse seu painel profissional online.
@@ -639,7 +637,7 @@ def cmd_consulta(message):
 @bot.message_handler(commands=['dashboard'])
 def cmd_dashboard(message):
     user_id = message.from_user.id
-    dominio = "https://fisio-ia-bot-1.onrender.com"  # DOMÍNIO CORRIGIDO
+    dominio = "https://fisio-ia-bot-1.onrender.com"
     link_prof = f"{dominio}/profissional?user_id={user_id}"
     bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link_prof}")
     if is_admin(user_id):
@@ -655,7 +653,6 @@ def cmd_indicar(message):
     codigo = user.get("codigo_indicacao")
     link = f"https://t.me/{bot.get_me().username}?start={codigo}"
 
-    # Mensagem 1: explicação do sistema de indicação
     explicacao = (
         f"🎁 *Sistema de Indicação Premiada*\n\n"
         f"Você recebe um código exclusivo: `{codigo}`\n\n"
@@ -668,7 +665,6 @@ def cmd_indicar(message):
     )
     bot.send_message(message.chat.id, explicacao, parse_mode='Markdown')
 
-    # Mensagem 2: texto para copiar e enviar ao amigo
     convite = (
         f"🌟 *MestreFisio – Seu assistente de IA para fisioterapia!*\n\n"
         f"Olá! Estou usando o MestreFisio e recomendo. É uma plataforma completa com:\n"
@@ -684,7 +680,7 @@ def cmd_indicar(message):
     bot.send_message(message.chat.id, convite, parse_mode='Markdown')
 
 # =================================================================
-# BLOCO 3 - CALLBACKS PRINCIPAIS E FLUXOS (COM BUSCA DE ARTIGOS E STATUS CORRIGIDOS)
+# BLOCO 3 - CALLBACKS PRINCIPAIS E FLUXOS (COM NOVAS FUNÇÕES NO SUBMENU PACIENTE)
 # =================================================================
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -703,87 +699,6 @@ def callback_query(call):
     elif data == "analisar_laudo":
         user_state[call.from_user.id] = {"tipo": "laudo"}
         bot.send_message(call.message.chat.id, "📷 Envie a imagem ou PDF do laudo para análise.")
-
-    elif data == "gerar_laudo":
-        pacientes = list(pacientes_coll.find({"profissional_id": call.from_user.id}))
-        if not pacientes:
-            bot.send_message(call.message.chat.id, "📭 Nenhum paciente cadastrado.")
-            return
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for p in pacientes:
-            markup.add(types.InlineKeyboardButton(p['nome'], callback_data=f"laudo_sel_paciente_{p['nome']}"))
-        bot.send_message(call.message.chat.id, "Selecione o paciente para gerar laudo/atestado:", reply_markup=markup)
-
-    elif data.startswith("laudo_sel_paciente_"):
-        nome = data.replace("laudo_sel_paciente_", "")
-        user_state[call.from_user.id] = {"tipo": "laudo_tipo", "paciente": nome}
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        tipos = [
-            ("🧾 Laudo clínico", "clinico"),
-            ("🏋️ Exercícios", "exercicios"),
-            ("📉 Evolução", "evolucao"),
-            ("🛌 Atestado", "atestado"),
-            ("⚡ Tratamento", "tratamento"),
-            ("📊 Convênio", "convenio"),
-            ("🧠 Biomecânica", "biomecanica")
-        ]
-        for nome_tipo, tipo in tipos:
-            markup.add(types.InlineKeyboardButton(nome_tipo, callback_data=f"laudo_tipo_{tipo}_{nome}"))
-        bot.send_message(call.message.chat.id, f"Tipo de laudo para {nome}:", reply_markup=markup)
-
-    elif data.startswith("laudo_tipo_"):
-        partes = data.split("_")
-        tipo = partes[2]
-        nome = partes[3]
-        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
-        if not paciente:
-            bot.send_message(call.message.chat.id, "Paciente não encontrado.")
-            return
-        memoria = montar_memoria_clinica(paciente)
-        profissional = uso_coll.find_one({"user_id": call.from_user.id})
-        nome_prof = profissional.get("nome_profissional", "Profissional")
-        registro = profissional.get("registro_profissional", "")
-        especialidade = "Fisioterapeuta PhD Especialista em Ortopedia e Biomecânica"
-
-        prompt_laudo = PROMPTS_LAUDO.get(tipo, PROMPTS_LAUDO["clinico"])
-        prompt = f"""
-{PROMPT_SISTEMA_COMPLETO}
-
-Paciente: {nome}
-
-Histórico clínico completo:
-{memoria}
-
-{prompt_laudo}
-
-Finalize com assinatura profissional.
-"""
-        analise = chamar_gemini(call.message, prompt, nome, tipo="laudo")
-        if analise:
-            texto_final = f"""Paciente: {nome}
-
-{analise}
-
----
-
-**Atenciosamente,**
-
-**{nome_prof}**  
-{especialidade}  
-Registro: {registro}
-
----
-
-**Assinatura do Paciente (confirmação de recebimento e compreensão):**
-
-_______________________________________
-{paciente.get('nome', nome)}
-
-"""
-            pdf_buffer = gerar_pdf(nome, texto_final)
-            bot.send_document(call.message.chat.id, pdf_buffer, visible_file_name=f"Laudo_{tipo}_{nome}.pdf")
-        else:
-            bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
 
     # ========== BUSCAR ARTIGOS ==========
     elif data == "buscar_artigos":
@@ -857,14 +772,111 @@ _______________________________________
             return
         texto = f"📂 {nome}\n\nStatus: {paciente.get('status', 'ativo').upper()}\nData cadastro: {paciente.get('criado_em', 'N/A')}\nÚltima análise: {paciente.get('data', 'N/A')}\n\n🧠 Última análise:\n{paciente.get('ultima_analise', 'Sem análise anterior.')[:500]}..."
         user_state[call.from_user.id] = {"paciente": nome}
-        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("📈 Evolução diária", callback_data="evolucao_diaria"),
             types.InlineKeyboardButton("🧠 Nova análise", callback_data="nova_analise"),
-            types.InlineKeyboardButton("📄 Gerar Laudo PDF", callback_data=f"pdf_{nome}"),
+            types.InlineKeyboardButton("📄 Laudo/Atestado", callback_data=f"gerar_laudo_paciente_{nome}"),
+            types.InlineKeyboardButton("📄 Resumo PDF", callback_data=f"pdf_{nome}"),
+            types.InlineKeyboardButton("🧠 Educação em Dor", callback_data=f"educacao_dor_{nome}"),
             types.InlineKeyboardButton("🔄 Alterar Status", callback_data=f"alterar_status_{nome}")
         )
         bot.send_message(call.message.chat.id, texto, reply_markup=markup)
+
+    # ========== GERAR LAUDO/ATESTADO DIRETO DO PACIENTE ==========
+    elif data.startswith("gerar_laudo_paciente_"):
+        nome = data.replace("gerar_laudo_paciente_", "")
+        user_state[call.from_user.id] = {"tipo": "laudo_tipo", "paciente": nome}
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        tipos = [
+            ("🧾 Laudo clínico", "clinico"),
+            ("🏋️ Exercícios", "exercicios"),
+            ("📉 Evolução", "evolucao"),
+            ("🛌 Atestado", "atestado"),
+            ("⚡ Tratamento", "tratamento"),
+            ("📊 Convênio", "convenio"),
+            ("🧠 Biomecânica", "biomecanica")
+        ]
+        for nome_tipo, tipo in tipos:
+            markup.add(types.InlineKeyboardButton(nome_tipo, callback_data=f"laudo_tipo_{tipo}_{nome}"))
+        bot.send_message(call.message.chat.id, f"Tipo de laudo para {nome}:", reply_markup=markup)
+
+    elif data.startswith("laudo_tipo_"):
+        partes = data.split("_")
+        tipo = partes[2]
+        nome = partes[3]
+        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
+        if not paciente:
+            bot.send_message(call.message.chat.id, "Paciente não encontrado.")
+            return
+        memoria = montar_memoria_clinica(paciente)
+        profissional = uso_coll.find_one({"user_id": call.from_user.id})
+        nome_prof = profissional.get("nome_profissional", "Profissional")
+        registro = profissional.get("registro_profissional", "")
+        especialidade = "Fisioterapeuta PhD Especialista em Ortopedia e Biomecânica"
+
+        prompt_laudo = PROMPTS_LAUDO.get(tipo, PROMPTS_LAUDO["clinico"])
+        prompt = f"""
+{PROMPT_SISTEMA_COMPLETO}
+
+Paciente: {nome}
+
+Histórico clínico completo:
+{memoria}
+
+{prompt_laudo}
+
+Finalize com assinatura profissional.
+"""
+        analise = chamar_gemini(call.message, prompt, nome, tipo="laudo")
+        if analise:
+            texto_final = f"""Paciente: {nome}
+
+{analise}
+
+---
+
+**Atenciosamente,**
+
+**{nome_prof}**  
+{especialidade}  
+Registro: {registro}
+
+---
+
+**Assinatura do Paciente (confirmação de recebimento e compreensão):**
+
+_______________________________________
+{paciente.get('nome', nome)}
+
+"""
+            pdf_buffer = gerar_pdf(nome, texto_final)
+            bot.send_document(call.message.chat.id, pdf_buffer, visible_file_name=f"Laudo_{tipo}_{nome}.pdf")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Erro ao gerar laudo.")
+
+    # ========== EDUCAÇÃO EM DOR ==========
+    elif data.startswith("educacao_dor_"):
+        nome = data.replace("educacao_dor_", "")
+        paciente = pacientes_coll.find_one({"profissional_id": call.from_user.id, "nome": nome})
+        if not paciente:
+            bot.send_message(call.message.chat.id, "Paciente não encontrado.")
+            return
+        memoria = montar_memoria_clinica(paciente)
+        prompt = f"""
+Você é um fisioterapeuta especialista em educação em dor. Com base no caso do paciente {nome} e nas informações abaixo, crie um texto educativo para ser entregue ao paciente. O texto deve ser claro, acolhedor e explicar:
+- O que é a dor e por que ela ocorre (sem linguagem técnica excessiva)
+- Como a fisioterapia pode ajudar
+- Dicas práticas para lidar com a dor no dia a dia
+- A importância do movimento seguro
+
+Informações do caso:
+{memoria[:2000]}
+
+Use uma linguagem empática e motivadora.
+"""
+        analise = chamar_gemini(call.message, prompt, tipo="analise")
+        # Não salvar como análise do paciente, apenas enviar
 
     elif data.startswith("alterar_status_"):
         nome = data.replace("alterar_status_", "")
@@ -883,7 +895,6 @@ _______________________________________
             {"$set": {"status": novo_status, "data_alta": datetime.now() if novo_status == "alta" else None}}
         )
         bot.send_message(call.message.chat.id, f"✅ Status de {nome} alterado para {novo_status.upper()}.")
-        # Volta ao submenu do paciente
         callback_query(types.CallbackQuery(id=call.id, from_user=call.from_user, message=call.message, data=f"paciente_{nome}"))
 
     elif data == "evolucao_diaria":

@@ -9,3 +9,4 @@ pytesseract
 Pillow
 pandas
 schedule
+pymed

@@ -21,7 +21,7 @@ def instalar_pacotes():
         try:
             __import__(pacote.replace("-", "_"))
         except ImportError:
-            print(f"Instalando {pacote}...")
+            print(f"[STARTUP] Instalando {pacote}...")
             subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pacote])
 
 instalar_pacotes()
@@ -32,7 +32,17 @@ import time
 import threading
 import random
 import string
+import logging
+import secrets
 from datetime import datetime, timedelta
+
+# ================= LOGGING =================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 import pytesseract
 from PIL import Image
@@ -53,6 +63,8 @@ MODELO = "gemini-2.5-flash"
 MONGO_URI = os.environ.get("MONGO_URI", "").strip()
 TOKEN_PAYMENT = os.environ.get("TOKEN_PAYMENT", "").strip()
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0") or 0)
+DOMAIN = os.environ.get("DOMAIN", "https://fisio-ia-bot-1.onrender.com").strip()
+SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
 
 if not TOKEN_TELEGRAM:
     raise ValueError("TOKEN_TELEGRAM não definido")
@@ -60,13 +72,35 @@ if not MONGO_URI:
     raise ValueError("MONGO_URI não definido")
 if not API_KEY_IA:
     raise ValueError("API_KEY_IA não definido")
+if not SECRET_KEY:
+    logger.warning("SECRET_KEY não definido – usando chave gerada aleatoriamente (sessões Flask serão resetadas a cada reinício)")
 
 # ================= BANCO DE DADOS =================
-client = MongoClient(MONGO_URI)
+client = MongoClient(
+    MONGO_URI,
+    serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=30000
+)
 db = client['mestre_fisio_db']
 pacientes_coll = db['pacientes']
 uso_coll = db['uso_usuarios']
 logs_coll = db['logs_analises']
+tokens_coll = db['dashboard_tokens']
+
+def criar_indices():
+    try:
+        pacientes_coll.create_index("profissional_id")
+        uso_coll.create_index("user_id", unique=True)
+        uso_coll.create_index("codigo_indicacao")
+        logs_coll.create_index("user_id")
+        tokens_coll.create_index("token", unique=True)
+        tokens_coll.create_index("expira_em", expireAfterSeconds=0)
+        logger.info("Índices MongoDB criados/verificados com sucesso.")
+    except Exception as e:
+        logger.error(f"Erro ao criar índices MongoDB: {e}")
+
+criar_indices()
 
 # ================= FUNÇÕES AUXILIARES =================
 def is_admin(user_id):
@@ -83,14 +117,13 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
         if codigo_indicador:
             indicador = uso_coll.find_one({"codigo_indicacao": codigo_indicador})
             if indicador and indicador["user_id"] != user_id:
-                novo_credito = indicador.get("creditos_desconto", 0) + 25
+                novo_credito = min(indicador.get("creditos_desconto", 0) + 25, 50)
                 uso_coll.update_one({"_id": indicador["_id"]}, {"$set": {"creditos_desconto": novo_credito}})
                 uso_coll.update_one({"_id": indicador["_id"]}, {"$push": {"indicacoes": {"user_id": user_id, "data": datetime.now()}}})
                 try:
-                    bot = telebot.TeleBot(TOKEN_TELEGRAM)
                     bot.send_message(indicador["user_id"], f"🎉 Parabéns! Um novo profissional se cadastrou usando seu código. Você ganhou +25% de desconto na próxima mensalidade! Seu saldo atual: {novo_credito}%")
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Não foi possível notificar indicador {indicador['user_id']}: {e}")
 
         uso_coll.insert_one({
             "user_id": user_id,
@@ -107,10 +140,9 @@ def registrar_usuario_se_novo(user_id, codigo_indicador=None):
         })
         if ADMIN_ID:
             try:
-                bot = telebot.TeleBot(TOKEN_TELEGRAM)
                 bot.send_message(ADMIN_ID, f"🚀 Novo usuário: ID {user_id}")
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Não foi possível notificar admin sobre novo usuário: {e}")
 
 def verificar_assinatura(user):
     if user.get("pro"):
@@ -175,12 +207,18 @@ def pode_usar_recurso(user_id, recurso):
 def pode_usar(user_id):
     return pode_usar_recurso(user_id, "analise")
 
+MAX_FILE_SIZE = 5 * 1024 * 1024   # 5 MB
+MAX_INPUT_LEN = 3000               # caracteres por mensagem de texto
+
 def extrair_texto_arquivo(file_bytes):
+    if len(file_bytes) > MAX_FILE_SIZE:
+        return None  # sinaliza arquivo muito grande
     try:
         imagem = Image.open(io.BytesIO(file_bytes))
         texto = pytesseract.image_to_string(imagem, lang='por')
         return texto.strip()
     except Exception as e:
+        logger.error(f"Erro OCR: {e}")
         return f"Erro OCR: {str(e)}"
 
 def montar_memoria_clinica(paciente):
@@ -242,7 +280,7 @@ def buscar_pubmed(query, max_results=3):
                 })
         return artigos
     except Exception as e:
-        print(f"Erro PubMed: {e}")
+        logger.error(f"Erro PubMed: {e}")
         return []
 
 def buscar_scielo(query, max_results=3):
@@ -262,7 +300,7 @@ def buscar_scielo(query, max_results=3):
             return artigos
         return []
     except Exception as e:
-        print(f"Erro SciELO: {e}")
+        logger.error(f"Erro SciELO: {e}")
         return []
 
 def buscar_lilacs(query, max_results=3):
@@ -288,7 +326,7 @@ def buscar_lilacs(query, max_results=3):
             return artigos
         return []
     except Exception as e:
-        print(f"Erro LILACS: {e}")
+        logger.error(f"Erro LILACS: {e}")
         return []
 
 def buscar_todas_fontes(query):
@@ -326,12 +364,35 @@ Síntese:
         else:
             return "Não foi possível gerar síntese (erro na IA)."
     except Exception as e:
-        print(f"Erro síntese IA: {e}")
+        logger.error(f"Erro síntese IA: {e}")
         return "Erro ao gerar síntese."
 
 # ================= SERVIDOR FLASK =================
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "chave_secreta_temporaria")
+app.secret_key = SECRET_KEY if SECRET_KEY else secrets.token_hex(32)
+
+def gerar_token_dashboard(user_id):
+    """Gera token temporário de 1h para acesso ao dashboard sem expor user_id na URL."""
+    token = secrets.token_urlsafe(32)
+    expira = datetime.now() + timedelta(hours=1)
+    tokens_coll.update_one(
+        {"user_id": user_id},
+        {"$set": {"token": token, "expira_em": expira}},
+        upsert=True
+    )
+    return token
+
+def validar_token_dashboard(token):
+    """Retorna user_id se token válido, None se inválido/expirado."""
+    if not token:
+        return None
+    doc = tokens_coll.find_one({"token": token})
+    if not doc:
+        return None
+    if doc.get("expira_em", datetime.min) < datetime.now():
+        tokens_coll.delete_one({"token": token})
+        return None
+    return doc["user_id"]
 
 @app.route('/')
 def home():
@@ -339,9 +400,10 @@ def home():
 
 @app.route('/admin')
 def admin_dashboard():
-    user_id = request.args.get('user_id')
-    if not user_id or not is_admin(int(user_id)):
-        return "Acesso negado", 403
+    token = request.args.get('token')
+    user_id = validar_token_dashboard(token)
+    if not user_id or not is_admin(user_id):
+        return "Acesso negado. Use o bot para gerar um link válido.", 403
     total_usuarios = uso_coll.count_documents({})
     total_pacientes = pacientes_coll.count_documents({})
     total_analises = logs_coll.count_documents({})
@@ -354,59 +416,131 @@ def admin_dashboard():
 
 @app.route('/profissional')
 def profissional_dashboard():
-    user_id = request.args.get('user_id')
+    token = request.args.get('token')
+    user_id = validar_token_dashboard(token)
     if not user_id:
-        return "Identifique-se com ?user_id=123", 400
-    user_id = int(user_id)
+        return "Link inválido ou expirado. Use o bot para gerar um novo link.", 401
     profissional = uso_coll.find_one({"user_id": user_id})
     if not profissional:
-        return "Profissional não encontrado", 404
+        return "Profissional não encontrado.", 404
     pacientes = list(pacientes_coll.find({"profissional_id": user_id}).sort("criado_em", -1))
     return render_template_string(PROFISSIONAL_TEMPLATE,
                                   profissional=profissional,
                                   pacientes=pacientes,
                                   admin_id=ADMIN_ID)
 
-ADMIN_TEMPLATE = """
-<!DOCTYPE html>
-<html><head><title>Dashboard Admin</title></head>
-<body>
-<h1>Painel Administrativo</h1>
-<p>Total usuários: {{ total_usuarios }}</p>
-<p>Total pacientes: {{ total_pacientes }}</p>
-<p>Total análises: {{ total_analises }}</p>
-<h2>Últimos usuários</h2>
-<ul>
-{% for u in ultimos_usuarios %}
-    <li>ID: {{ u.user_id }} - Plano: {{ u.plano }} - PRO: {{ u.pro }}</li>
-{% endfor %}
-</ul>
-</body>
-</html>
+_CSS_BASE = """
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;color:#333;padding:20px}
+  .card{background:#fff;border-radius:12px;padding:24px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+  h1{color:#1a73e8;margin-bottom:4px;font-size:1.6rem}
+  h2{color:#333;margin:16px 0 8px;font-size:1.1rem}
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.8rem;font-weight:600}
+  .badge-gratuito{background:#e8f0fe;color:#1a73e8}
+  .badge-prata{background:#f3e8ff;color:#7b2ff7}
+  .badge-ouro{background:#fff8e1;color:#f9a825}
+  .badge-diamante{background:#e8f5e9;color:#2e7d32}
+  .badge-admin{background:#fce8e6;color:#c62828}
+  .stat{text-align:center;padding:16px}
+  .stat-num{font-size:2.2rem;font-weight:700;color:#1a73e8}
+  .stat-label{font-size:.85rem;color:#666;margin-top:4px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px}
+  table{width:100%;border-collapse:collapse}
+  th{background:#f8f9fa;padding:10px 12px;text-align:left;font-size:.85rem;color:#555;border-bottom:2px solid #e0e0e0}
+  td{padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:.9rem}
+  tr:hover td{background:#f8f9fe}
+  .status-ativo{color:#2e7d32;font-weight:600}
+  .status-alta{color:#b71c1c;font-weight:600}
+  .footer{text-align:center;color:#aaa;font-size:.8rem;margin-top:24px}
+  @media(max-width:480px){.grid{grid-template-columns:1fr 1fr}}
+</style>
 """
 
-PROFISSIONAL_TEMPLATE = """
-<!DOCTYPE html>
-<html><head><title>Dashboard Profissional</title></head>
+ADMIN_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head><title>Admin – MestreFisio</title>""" + _CSS_BASE + """</head>
 <body>
-<h1>Olá, {{ profissional.nome_profissional or profissional.user_id }}</h1>
-<p>Registro: {{ profissional.registro_profissional or "Não informado" }}</p>
-<p>Plano atual:
-{% if profissional.user_id == admin_id %}ADMINISTRADOR
-{% elif profissional.plano == "prata" %}⭐ Prata (30 consultas/mês)
-{% elif profissional.plano == "ouro" %}🌟 Ouro (60 consultas/mês)
-{% elif profissional.plano == "diamante" %}💎 Diamante (300 consultas/mês)
-{% else %}🚀 Gratuito (5 consultas/mês)
-{% endif %}
-</p>
-<h2>Seus Pacientes ({{ pacientes|length }})</h2>
-<ul>
-{% for p in pacientes %}
-    <li><strong>{{ p.nome }}</strong> - Status: {{ p.status or "ativo" }} - Criado: {{ p.criado_em or "N/A" }}</li>
-{% endfor %}
-</ul>
-</body>
-</html>
+<div class="card">
+  <h1>🛡️ Painel Administrativo</h1>
+  <p style="color:#888;font-size:.85rem">MestreFisio PhD – visão geral da plataforma</p>
+</div>
+<div class="card">
+  <div class="grid">
+    <div class="stat"><div class="stat-num">{{ total_usuarios }}</div><div class="stat-label">Usuários cadastrados</div></div>
+    <div class="stat"><div class="stat-num">{{ total_pacientes }}</div><div class="stat-label">Pacientes no sistema</div></div>
+    <div class="stat"><div class="stat-num">{{ total_analises }}</div><div class="stat-label">Análises realizadas</div></div>
+  </div>
+</div>
+<div class="card">
+  <h2>Últimos 10 usuários cadastrados</h2>
+  <table>
+    <tr><th>ID Telegram</th><th>Nome</th><th>Plano</th><th>PRO</th><th>Cadastro</th></tr>
+    {% for u in ultimos_usuarios %}
+    <tr>
+      <td style="font-family:monospace;color:#555">{{ u.user_id }}</td>
+      <td>{{ u.nome_profissional or '—' }}</td>
+      <td>
+        {% if u.plano == 'prata' %}<span class="badge badge-prata">⭐ Prata</span>
+        {% elif u.plano == 'ouro' %}<span class="badge badge-ouro">🌟 Ouro</span>
+        {% elif u.plano == 'diamante' %}<span class="badge badge-diamante">💎 Diamante</span>
+        {% else %}<span class="badge badge-gratuito">Gratuito</span>{% endif %}
+      </td>
+      <td>{{ '✅' if u.pro else '—' }}</td>
+      <td style="color:#888;font-size:.82rem">{{ u.criado_em or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+<p class="footer">MestreFisio PhD · Link válido por 1h · Gerado pelo bot</p>
+</body></html>
+"""
+
+PROFISSIONAL_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head><title>Painel – MestreFisio</title>""" + _CSS_BASE + """</head>
+<body>
+<div class="card">
+  <h1>👋 Olá, {{ profissional.nome_profissional or 'Profissional' }}</h1>
+  <p style="color:#888;font-size:.9rem">{{ profissional.registro_profissional or 'Registro não informado' }}</p>
+  <div style="margin-top:12px">
+    {% if profissional.user_id == admin_id %}
+      <span class="badge badge-admin">👑 Administrador</span>
+    {% elif profissional.plano == 'prata' %}
+      <span class="badge badge-prata">⭐ Plano Prata</span>
+    {% elif profissional.plano == 'ouro' %}
+      <span class="badge badge-ouro">🌟 Plano Ouro</span>
+    {% elif profissional.plano == 'diamante' %}
+      <span class="badge badge-diamante">💎 Plano Diamante</span>
+    {% else %}
+      <span class="badge badge-gratuito">🚀 Plano Gratuito</span>
+    {% endif %}
+  </div>
+</div>
+<div class="card">
+  <h2>👥 Pacientes ({{ pacientes|length }})</h2>
+  {% if pacientes %}
+  <table>
+    <tr><th>Nome</th><th>Status</th><th>Última análise</th><th>Cadastro</th></tr>
+    {% for p in pacientes %}
+    <tr>
+      <td><strong>{{ p.nome }}</strong></td>
+      <td>
+        {% if p.status == 'alta' %}<span class="status-alta">Alta</span>
+        {% else %}<span class="status-ativo">Ativo</span>{% endif %}
+      </td>
+      <td style="color:#888;font-size:.85rem">{{ p.data or '—' }}</td>
+      <td style="color:#aaa;font-size:.82rem">{{ p.criado_em.strftime('%d/%m/%Y') if p.criado_em and p.criado_em.__class__.__name__ == 'datetime' else (p.criado_em or '—') }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#aaa;text-align:center;padding:24px">Nenhum paciente cadastrado ainda.</p>
+  {% endif %}
+</div>
+<p class="footer">MestreFisio PhD · Link válido por 1h · Gerado pelo bot</p>
+</body></html>
 """
 
 def run_flask():
@@ -421,6 +555,7 @@ flask_thread.start()
 
 bot = telebot.TeleBot(TOKEN_TELEGRAM, threaded=False)
 user_state = {}
+_state_lock = threading.Lock()
 
 # ================= PROMPTS =================
 PROMPT_SISTEMA_COMPLETO = """
@@ -488,15 +623,15 @@ def chamar_gemini(message, prompt, nome_paciente=None, tipo="analise"):
         if response.status_code != 200:
             bot.delete_message(message.chat.id, aguarde.message_id)
             bot.send_message(message.chat.id, "❌ Erro na API da IA.")
-            print(response.text)
+            logger.error(f"Gemini API error {response.status_code}: {response.text[:500]}")
             return None
         res_data = response.json()
         try:
             analise = res_data['candidates'][0]['content']['parts'][0]['text']
-        except:
+        except (KeyError, IndexError) as e:
             bot.delete_message(message.chat.id, aguarde.message_id)
             bot.send_message(message.chat.id, "⚠️ Erro ao interpretar resposta da IA.")
-            print(res_data)
+            logger.error(f"Erro parsing resposta Gemini: {e} | Resposta: {str(res_data)[:300]}")
             return None
 
         if nome_paciente and tipo == "analise":
@@ -519,8 +654,8 @@ def chamar_gemini(message, prompt, nome_paciente=None, tipo="analise"):
         bot.send_message(message.chat.id, "✅ Finalizado.", reply_markup=menu_principal())
         return analise
     except Exception as e:
-        print(e)
-        bot.send_message(message.chat.id, "❌ Erro na IA.")
+        logger.error(f"Erro inesperado chamar_gemini: {e}")
+        bot.send_message(message.chat.id, "❌ Erro na IA. Tente novamente.")
         return None
 
 # ================= MENU PRINCIPAL =================
@@ -547,7 +682,7 @@ def send_welcome(message):
     registrar_usuario_se_novo(message.from_user.id, codigo)
     if not verificar_dados_profissional(message):
         return
-    bot.send_message(message.chat.id, "🚀 **MestreFisio V5.0 Especialista**\nAgora com memória clínica inteligente.", reply_markup=menu_principal())
+    bot.send_message(message.chat.id, "🚀 *MestreFisio V5.0 Especialista*\nAgora com memória clínica inteligente.\n\nUse /status para ver seu plano e uso mensal.", parse_mode='Markdown', reply_markup=menu_principal())
 
 # ================= CAPTURA DE DADOS DO PROFISSIONAL =================
 def verificar_dados_profissional(message):
@@ -560,19 +695,25 @@ def verificar_dados_profissional(message):
 
 def salvar_dados_profissional(message):
     try:
-        partes = message.text.split('|')
+        texto = (message.text or "").strip()
+        partes = texto.split('|')
         if len(partes) < 2:
-            raise ValueError
-        nome = partes[0].strip()
-        registro = partes[1].strip()
+            raise ValueError("Separador | não encontrado")
+        nome = partes[0].strip()[:120]
+        registro = partes[1].strip()[:60]
+        if not nome or not registro:
+            raise ValueError("Nome ou registro vazio")
         uso_coll.update_one(
             {"user_id": message.from_user.id},
             {"$set": {"nome_profissional": nome, "registro_profissional": registro}}
         )
         bot.send_message(message.chat.id, f"✅ Dados salvos:\n👤 {nome}\n🆔 {registro}\n\nAgora você pode usar todas as funcionalidades!", reply_markup=menu_principal())
-    except:
-        bot.send_message(message.chat.id, "❌ Formato inválido. Use exatamente:\n`Nome Completo | Crefito 123456`\nTente novamente.")
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Formato inválido. Use exatamente:\n`Nome Completo | Crefito 123456`\nTente novamente.", parse_mode='Markdown')
         verificar_dados_profissional(message)
+    except Exception as e:
+        logger.error(f"Erro ao salvar dados profissional: {e}")
+        bot.send_message(message.chat.id, "❌ Erro interno. Tente novamente mais tarde.")
 
 # ================= HANDLERS DOS COMANDOS =================
 @bot.message_handler(commands=['historico'])
@@ -623,11 +764,12 @@ def cmd_ajuda(message):
 Comandos rápidos:
 /historico – Lista pacientes
 /planos – Detalhes dos planos
+/status – Ver uso do mês e plano atual
 /ajuda – Este texto
-/dashboard – Link para painel
+/dashboard – Link para painel (válido 1h)
 /indicar – Gerar link de indicação
 """
-    bot.send_message(message.chat.id, ajuda_texto, parse_mode='Markdown')
+    bot.send_message(message.chat.id, ajuda_texto, parse_mode='Markdown', reply_markup=menu_principal())
 
 @bot.message_handler(commands=['consulta'])
 def cmd_consulta(message):
@@ -637,12 +779,47 @@ def cmd_consulta(message):
 @bot.message_handler(commands=['dashboard'])
 def cmd_dashboard(message):
     user_id = message.from_user.id
-    dominio = "https://fisio-ia-bot-1.onrender.com"
-    link_prof = f"{dominio}/profissional?user_id={user_id}"
-    bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional aqui:\n{link_prof}")
+    token = gerar_token_dashboard(user_id)
+    link_prof = f"{DOMAIN}/profissional?token={token}"
+    bot.send_message(message.chat.id, f"🌐 Acesse seu painel profissional (válido por 1h):\n{link_prof}")
     if is_admin(user_id):
-        link_admin = f"{dominio}/admin?user_id={user_id}"
-        bot.send_message(message.chat.id, f"👑 Link admin:\n{link_admin}")
+        link_admin = f"{DOMAIN}/admin?token={token}"
+        bot.send_message(message.chat.id, f"👑 Link admin (válido por 1h):\n{link_admin}")
+
+@bot.message_handler(commands=['status'])
+def cmd_status(message):
+    user_id = message.from_user.id
+    if is_admin(user_id):
+        bot.send_message(message.chat.id, "👑 Você é administrador – sem limites de uso.", reply_markup=menu_principal())
+        return
+    user = uso_coll.find_one({"user_id": user_id})
+    if not user:
+        bot.send_message(message.chat.id, "❌ Conta não encontrada. Use /start para começar.", reply_markup=menu_principal())
+        return
+    verificar_assinatura(user)
+    user = uso_coll.find_one({"user_id": user_id})
+    plano = user.get("plano", "gratuito") if user.get("pro") else "gratuito"
+    limites = obter_limites_plano(plano)
+    uso_mes = user.get("uso_mes", 0)
+    laudos_mes = user.get("laudos_mes", 0)
+    uso_buscas = user.get("uso_buscas", 0)
+    total_pac = pacientes_coll.count_documents({"profissional_id": user_id})
+    emojis = {"gratuito": "🚀", "prata": "⭐", "ouro": "🌟", "diamante": "💎"}
+    emoji = emojis.get(plano, "🚀")
+    expira_txt = ""
+    if user.get("pro") and user.get("pro_expira_em"):
+        dias_restantes = int((user["pro_expira_em"] - time.time()) / 86400)
+        expira_txt = f"\n⏳ Plano expira em: {max(0, dias_restantes)} dias"
+    texto = (
+        f"{emoji} *Plano atual: {plano.capitalize()}*{expira_txt}\n\n"
+        f"📊 *Uso do mês:*\n"
+        f"• Análises: {uso_mes}/{limites['analises']}\n"
+        f"• Laudos: {laudos_mes}/{limites['laudos']}\n"
+        f"• Buscas científicas: {uso_buscas}/{limites['buscas']}\n"
+        f"• Pacientes: {total_pac}/{limites['pacientes']}\n\n"
+        f"🎁 Descontos acumulados: {user.get('creditos_desconto', 0)}%"
+    )
+    bot.send_message(message.chat.id, texto, parse_mode='Markdown', reply_markup=menu_principal())
 
 @bot.message_handler(commands=['indicar'])
 def cmd_indicar(message):
@@ -889,7 +1066,10 @@ Use uma linguagem empática e motivadora.
         bot.send_message(call.message.chat.id, f"Status atual: {status_atual.upper()}\nAlterar para:", reply_markup=markup)
 
     elif data.startswith("set_status_"):
-        _, nome, novo_status = data.split("_")
+        # formato: "set_status_{nome}_{novo_status}" onde novo_status é "ativo" ou "alta"
+        resto = data[len("set_status_"):]
+        partes_status = resto.rsplit("_", 1)
+        nome, novo_status = partes_status[0], partes_status[1]
         pacientes_coll.update_one(
             {"profissional_id": call.from_user.id, "nome": nome},
             {"$set": {"status": novo_status, "data_alta": datetime.now() if novo_status == "alta" else None}}
@@ -968,7 +1148,14 @@ Sua tarefa é fornecer uma análise resumida para acompanhamento do caso:
             bot.send_message(call.message.chat.id, f"❌ Erro no pagamento:\n{str(e)}")
 
     elif data == "dashboard":
-        cmd_dashboard(call.message)
+        # Adapta call.message para ter from_user correto (call.message.from_user é o bot)
+        user_id = call.from_user.id
+        token = gerar_token_dashboard(user_id)
+        link_prof = f"{DOMAIN}/profissional?token={token}"
+        bot.send_message(call.message.chat.id, f"🌐 Acesse seu painel profissional (válido por 1h):\n{link_prof}")
+        if is_admin(user_id):
+            link_admin = f"{DOMAIN}/admin?token={token}"
+            bot.send_message(call.message.chat.id, f"👑 Link admin (válido por 1h):\n{link_admin}")
 
     elif data == "indicar":
         cmd_indicar(call.message)
@@ -978,9 +1165,9 @@ Sua tarefa é fornecer uma análise resumida para acompanhamento do caso:
 
 # ================= FUNÇÃO PARA PROCESSAR BUSCA CIENTÍFICA =================
 def processar_busca_cientifica(message):
-    query = message.text.strip()
+    query = (message.text or "").strip()[:300]
     if not query:
-        bot.send_message(message.chat.id, "Por favor, informe um termo válido.")
+        bot.send_message(message.chat.id, "❌ Por favor, informe um termo de busca válido.", reply_markup=menu_principal())
         return
 
     aguarde = bot.send_message(message.chat.id, "🔍 Buscando evidências em PubMed, SciELO e LILACS...\nIsso pode levar alguns segundos.")
@@ -1008,7 +1195,7 @@ def processar_busca_cientifica(message):
     # Gera síntese com IA
     bot.send_message(message.chat.id, "🤖 Gerando síntese dos achados...")
     sintese = sintetizar_artigos_com_ia(query, artigos)
-    bot.send_message(message.chat.id, f"📝 *Síntese das evidências:*\n\n{sintese}", parse_mode='Markdown')
+    bot.send_message(message.chat.id, f"📝 *Síntese das evidências:*\n\n{sintese}", parse_mode='Markdown', reply_markup=menu_principal())
 
 # =================================================================
 # BLOCO 4 - FUNÇÕES DE FLUXO, ARQUIVOS, PAGAMENTOS E EXECUÇÃO
@@ -1016,23 +1203,45 @@ def processar_busca_cientifica(message):
 
 def obter_nome_paciente(message):
     nome = message.text.upper().strip()
+    if not nome or len(nome) < 2:
+        msg = bot.send_message(message.chat.id, "❌ Nome inválido. Digite o nome completo do paciente:")
+        bot.register_next_step_handler(msg, obter_nome_paciente)
+        return
+    if len(nome) > 120:
+        msg = bot.send_message(message.chat.id, "❌ Nome muito longo (máx. 120 caracteres). Digite novamente:")
+        bot.register_next_step_handler(msg, obter_nome_paciente)
+        return
+    # Verifica limite de pacientes do plano
+    user = uso_coll.find_one({"user_id": message.from_user.id})
+    if user and not is_admin(message.from_user.id):
+        plano = user.get("plano", "gratuito") if user.get("pro") else "gratuito"
+        limite_pac = obter_limites_plano(plano)["pacientes"]
+        total_pac = pacientes_coll.count_documents({"profissional_id": message.from_user.id})
+        if total_pac >= limite_pac:
+            bot.send_message(message.chat.id, f"🚫 Limite de {limite_pac} pacientes atingido no plano {plano.capitalize()}. Faça upgrade em /planos.", reply_markup=menu_principal())
+            return
     pacientes_coll.update_one(
         {"profissional_id": message.from_user.id, "nome": nome},
         {"$setOnInsert": {"status": "ativo", "criado_em": datetime.now()}},
         upsert=True
     )
-    user_state[message.from_user.id] = {"tipo": "novo_paciente", "paciente": nome}
-    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico:")
+    with _state_lock:
+        user_state[message.from_user.id] = {"tipo": "novo_paciente", "paciente": nome}
+    msg = bot.send_message(message.chat.id, f"✅ Paciente: {nome}\nDescreva o quadro clínico (máx. {MAX_INPUT_LEN} caracteres):")
     bot.register_next_step_handler(msg, processar_ia_paciente, nome)
 
 def processar_ia_paciente(message, nome):
+    texto_clinico = (message.text or "").strip()[:MAX_INPUT_LEN]
+    if not texto_clinico:
+        bot.send_message(message.chat.id, "❌ Descrição vazia. Tente novamente.", reply_markup=menu_principal())
+        return
     paciente = pacientes_coll.find_one({"profissional_id": message.from_user.id, "nome": nome}) or {}
     memoria = montar_memoria_clinica(paciente)
     prompt = f"""
 {PROMPT_SISTEMA_COMPLETO}
 
 PACIENTE: {nome}
-INFORMAÇÕES CLÍNICAS: {message.text}
+INFORMAÇÕES CLÍNICAS: {texto_clinico}
 
 Sua tarefa é fornecer uma análise para este novo paciente:
 1. RESUMO DO CASO (com base nas informações fornecidas)
@@ -1044,18 +1253,27 @@ Seja direto, técnico e estruture a resposta em tópicos.
     chamar_gemini(message, prompt, nome, tipo="analise")
 
 def processar_ia_direta(message):
-    prompt = f"{PROMPT_DUVIDA_TECNICA}\n\nPergunta: {message.text}"
+    pergunta = (message.text or "").strip()[:MAX_INPUT_LEN]
+    if not pergunta:
+        bot.send_message(message.chat.id, "❌ Nenhuma dúvida informada.", reply_markup=menu_principal())
+        return
+    prompt = f"{PROMPT_DUVIDA_TECNICA}\n\nPergunta: {pergunta}"
     chamar_gemini(message, prompt, tipo="analise")
 
 def receber_evolucao(message):
-    nome = user_state.get(message.from_user.id, {}).get("paciente")
+    with _state_lock:
+        nome = user_state.get(message.from_user.id, {}).get("paciente")
     if not nome:
-        bot.send_message(message.chat.id, "Erro: paciente não identificado.")
+        bot.send_message(message.chat.id, "Erro: paciente não identificado.", reply_markup=menu_principal())
+        return
+    nota = (message.text or "").strip()[:MAX_INPUT_LEN]
+    if not nota:
+        bot.send_message(message.chat.id, "❌ Evolução vazia. Tente novamente.", reply_markup=menu_principal())
         return
     data_hora = datetime.now().strftime('%d/%m/%Y %H:%M')
     pacientes_coll.update_one(
         {"profissional_id": message.from_user.id, "nome": nome},
-        {"$push": {"historico_evolucao": {"data": data_hora, "nota": message.text}}},
+        {"$push": {"historico_evolucao": {"data": data_hora, "nota": nota}}},
         upsert=True
     )
     bot.send_message(message.chat.id, f"✅ Evolução registrada em {data_hora}.")
@@ -1067,7 +1285,7 @@ def receber_evolucao(message):
 Paciente: {nome}
 Histórico:
 {memoria}
-Nova evolução: {message.text}
+Nova evolução: {nota}
 
 Forneça uma análise resumida considerando essa evolução:
 1. EVOLUÇÃO CLÍNICA
@@ -1078,7 +1296,8 @@ Forneça uma análise resumida considerando essa evolução:
 
 @bot.message_handler(content_types=['photo', 'document'])
 def receber_arquivo(message):
-    estado = user_state.get(message.from_user.id)
+    with _state_lock:
+        estado = user_state.get(message.from_user.id)
     if not estado or estado.get("tipo") != "laudo":
         return
     bot.send_message(message.chat.id, "🔍 Processando laudo...")
@@ -1088,16 +1307,21 @@ def receber_arquivo(message):
         else:
             file_info = bot.get_file(message.photo[-1].file_id)
         downloaded = bot.download_file(file_info.file_path)
-        texto = extrair_texto_arquivo(downloaded)
-        if not texto:
-            bot.send_message(message.chat.id, "❌ Não foi possível extrair texto do laudo.")
+        if len(downloaded) > MAX_FILE_SIZE:
+            bot.send_message(message.chat.id, f"❌ Arquivo muito grande. Máximo permitido: {MAX_FILE_SIZE // (1024*1024)} MB.")
             return
-        prompt = f"{PROMPT_SISTEMA_COMPLETO}\n\nAnalise o seguinte laudo médico:\n\n{texto}"
+        texto = extrair_texto_arquivo(downloaded)
+        if not texto or texto.startswith("Erro OCR"):
+            bot.send_message(message.chat.id, "❌ Não foi possível extrair texto do laudo. Certifique-se de enviar uma imagem nítida.")
+            return
+        prompt = f"{PROMPT_SISTEMA_COMPLETO}\n\nAnalise o seguinte laudo médico:\n\n{texto[:4000]}"
         chamar_gemini(message, prompt, tipo="analise")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Erro: {str(e)}")
+        logger.error(f"Erro ao processar arquivo: {e}")
+        bot.send_message(message.chat.id, "❌ Erro ao processar o arquivo. Tente novamente.")
     finally:
-        user_state.pop(message.from_user.id, None)
+        with _state_lock:
+            user_state.pop(message.from_user.id, None)
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def process_pre_checkout_query(pre_checkout_query):
@@ -1138,5 +1362,10 @@ def pagamento_sucesso(message):
 if __name__ == "__main__":
     bot.remove_webhook()
     time.sleep(2)
-    print("Bot iniciado...")
-    bot.infinity_polling(timeout=120, long_polling_timeout=60)
+    logger.info("Bot MestreFisio iniciado com sucesso.")
+    while True:
+        try:
+            bot.infinity_polling(timeout=120, long_polling_timeout=60)
+        except Exception as e:
+            logger.error(f"Bot polling interrompido: {e}. Reiniciando em 10s...")
+            time.sleep(10)

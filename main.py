@@ -424,10 +424,34 @@ def profissional_dashboard():
     if not profissional:
         return "Profissional não encontrado.", 404
     pacientes = list(pacientes_coll.find({"profissional_id": user_id}).sort("criado_em", -1))
+    mensagem = request.args.get('msg', '')
     return render_template_string(PROFISSIONAL_TEMPLATE,
                                   profissional=profissional,
                                   pacientes=pacientes,
-                                  admin_id=ADMIN_ID)
+                                  admin_id=ADMIN_ID,
+                                  token=token,
+                                  mensagem=mensagem)
+
+@app.route('/profissional/alterar-status', methods=['POST'])
+def alterar_status_web():
+    token = request.form.get('token')
+    user_id = validar_token_dashboard(token)
+    if not user_id:
+        return "Link inválido ou expirado.", 401
+    nome = request.form.get('nome', '').strip()
+    novo_status = request.form.get('novo_status', '').strip()
+    if not nome or novo_status not in ('ativo', 'alta'):
+        return "Dados inválidos.", 400
+    paciente = pacientes_coll.find_one({"profissional_id": user_id, "nome": nome})
+    if not paciente:
+        return "Paciente não encontrado.", 404
+    pacientes_coll.update_one(
+        {"profissional_id": user_id, "nome": nome},
+        {"$set": {"status": novo_status,
+                  "data_alta": datetime.now() if novo_status == "alta" else None}}
+    )
+    from flask import redirect
+    return redirect(f"/profissional?token={token}&msg=Status+de+{nome}+alterado+para+{novo_status.upper()}")
 
 _CSS_BASE = """
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -449,12 +473,18 @@ _CSS_BASE = """
   .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px}
   table{width:100%;border-collapse:collapse}
   th{background:#f8f9fa;padding:10px 12px;text-align:left;font-size:.85rem;color:#555;border-bottom:2px solid #e0e0e0}
-  td{padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:.9rem}
+  td{padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:.9rem;vertical-align:middle}
   tr:hover td{background:#f8f9fe}
   .status-ativo{color:#2e7d32;font-weight:600}
   .status-alta{color:#b71c1c;font-weight:600}
+  .btn{display:inline-block;padding:4px 12px;border-radius:6px;border:none;cursor:pointer;font-size:.8rem;font-weight:600;transition:opacity .15s}
+  .btn:hover{opacity:.8}
+  .btn-alta{background:#fce8e6;color:#c62828}
+  .btn-ativo{background:#e8f5e9;color:#2e7d32}
+  .alert{padding:12px 16px;border-radius:8px;background:#e8f5e9;color:#2e7d32;font-weight:600;margin-bottom:16px}
   .footer{text-align:center;color:#aaa;font-size:.8rem;margin-top:24px}
-  @media(max-width:480px){.grid{grid-template-columns:1fr 1fr}}
+  @media(max-width:600px){table,thead,tbody,th,td,tr{display:block}
+    th{display:none}td{padding:6px 0;border:none}td:before{font-weight:600;margin-right:6px}}
 </style>
 """
 
@@ -518,20 +548,40 @@ PROFISSIONAL_TEMPLATE = """<!DOCTYPE html>
     {% endif %}
   </div>
 </div>
+{% if mensagem %}
+<div class="alert">✅ {{ mensagem }}</div>
+{% endif %}
 <div class="card">
   <h2>👥 Pacientes ({{ pacientes|length }})</h2>
   {% if pacientes %}
   <table>
-    <tr><th>Nome</th><th>Status</th><th>Última análise</th><th>Cadastro</th></tr>
+    <tr><th>Nome</th><th>Status</th><th>Última análise</th><th>Cadastro</th><th>Ação</th></tr>
     {% for p in pacientes %}
     <tr>
       <td><strong>{{ p.nome }}</strong></td>
       <td>
-        {% if p.status == 'alta' %}<span class="status-alta">Alta</span>
-        {% else %}<span class="status-ativo">Ativo</span>{% endif %}
+        {% if p.status == 'alta' %}<span class="status-alta">🔴 Alta</span>
+        {% else %}<span class="status-ativo">🟢 Ativo</span>{% endif %}
       </td>
       <td style="color:#888;font-size:.85rem">{{ p.data or '—' }}</td>
       <td style="color:#aaa;font-size:.82rem">{{ p.criado_em.strftime('%d/%m/%Y') if p.criado_em and p.criado_em.__class__.__name__ == 'datetime' else (p.criado_em or '—') }}</td>
+      <td>
+        {% if p.status == 'alta' %}
+        <form method="POST" action="/profissional/alterar-status" style="display:inline">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="nome" value="{{ p.nome }}">
+          <input type="hidden" name="novo_status" value="ativo">
+          <button type="submit" class="btn btn-ativo">→ Ativo</button>
+        </form>
+        {% else %}
+        <form method="POST" action="/profissional/alterar-status" style="display:inline">
+          <input type="hidden" name="token" value="{{ token }}">
+          <input type="hidden" name="nome" value="{{ p.nome }}">
+          <input type="hidden" name="novo_status" value="alta">
+          <button type="submit" class="btn btn-alta">→ Alta</button>
+        </form>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </table>

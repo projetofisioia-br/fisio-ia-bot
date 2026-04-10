@@ -600,13 +600,109 @@ Seja objetivo, prático e evite aprofundamento excessivo.
 
 PROMPTS_LAUDO = {
     "clinico": "Gere um laudo clínico conciso e objetivo (máximo 1 página). Inclua: 1) Resumo do caso, 2) Diagnóstico principal, 3) Conduta terapêutica, 4) Prognóstico. Seja direto e evite repetições.",
-    "exercicios": "Gere um programa de exercícios terapêuticos detalhado, mas conciso (máximo 1 página). Liste: 1) Objetivos, 2) Exercícios (nome, execução, séries/repetições), 3) Frequência e cuidados.",
+    "exercicios": "Gere um programa de exercícios terapêuticos individualizado para este paciente (máximo 1 página). Use exercícios baseados em evidências: Ponte Glútea, Bird Dog, Dead Bug, Prancha, Calf Raise Excêntrico, Nordic Hamstring, Hip Thrust, Clamshell, Chin Tuck, Rotação com Elástico, Step Up, entre outros adequados ao caso. Inclua: 1) Fase do tratamento (aguda/subaguda/crônica), 2) Objetivos terapêuticos, 3) Lista de exercícios com nome, execução detalhada, séries, repetições e progressão, 4) Frequência semanal e precauções. Adapte ao diagnóstico e limitações do paciente.",
     "evolucao": "Gere um relato de evolução clínica objetiva (máximo 1 página). Inclua: 1) Resumo da evolução, 2) Comparação com avaliação anterior, 3) Ajustes na conduta, 4) Metas.",
     "atestado": "Gere um atestado médico profissional (máximo 1 página). Inclua: 1) Identificação do paciente, 2) Período de afastamento (se aplicável), 3) CID e justificativa, 4) Recomendações. Formato oficial.",
     "tratamento": "Gere um plano de tratamento estruturado (máximo 1 página). Inclua: 1) Objetivos de curto/médio/longo prazo, 2) Modalidades terapêuticas, 3) Cronograma, 4) Critérios de alta.",
     "convenio": "Gere um relatório para convênio (máximo 1 página). Inclua: 1) Diagnóstico, 2) Evolução, 3) Sessões realizadas, 4) Resultados alcançados, 5) Necessidade de continuidade.",
     "biomecanica": "Gere uma análise biomecânica funcional (máximo 1 página). Inclua: 1) Análise de cadeia cinética, 2) Compensações observadas, 3) Estratégias de correção, 4) Exercícios específicos."
 }
+
+# =================================================================
+# BANCO DE EXERCÍCIOS TERAPÊUTICOS
+# =================================================================
+BANCO_EXERCICIOS = {
+    "🔙 Coluna Cervical": [
+        {"nome": "Flexão Cervical Ativa", "exec": "Sentado, queixo em direção ao peito lentamente", "sr": "3×10", "nivel": "🟢 Iniciante", "obj": "Mobilidade flexora"},
+        {"nome": "Extensão Cervical Ativa", "exec": "Sentado, cabeça para trás com controle", "sr": "3×10", "nivel": "🟢 Iniciante", "obj": "Mobilidade extensora"},
+        {"nome": "Inclinação Lateral Cervical", "exec": "Orelha em direção ao ombro ipsilateral, sem elevar o ombro", "sr": "3×10 cada lado", "nivel": "🟢 Iniciante", "obj": "Mobilidade lateral e alongamento"},
+        {"nome": "Retração Cervical (Chin Tuck)", "exec": "Empurrar queixo para trás horizontalmente, 'duplo queixo'", "sr": "3×15 (5s)", "nivel": "🟢 Iniciante", "obj": "Estabilização profunda e postura"},
+        {"nome": "Isometria Cervical Frontal", "exec": "Mão na testa, resistir à flexão sem mover a cabeça", "sr": "3×10 (6s)", "nivel": "🟡 Intermediário", "obj": "Fortalecimento flexores profundos"},
+        {"nome": "Isometria Cervical Lateral", "exec": "Mão na têmpora, resistir à inclinação lateral", "sr": "3×10 (6s) cada lado", "nivel": "🟡 Intermediário", "obj": "Fortalecimento estabilizadores laterais"},
+        {"nome": "Estabilização Cervical 4 Apoios", "exec": "Em quatro apoios, manter coluna neutra movendo membro contralateral", "sr": "3×10 cada lado", "nivel": "🔴 Avançado", "obj": "Controle motor cervical e dissociação"},
+    ],
+    "🔴 Coluna Lombar": [
+        {"nome": "Ponte Glútea", "exec": "Decúbito dorsal, joelhos fletidos, elevar quadril contraindo glúteos", "sr": "3×15", "nivel": "🟢 Iniciante", "obj": "Glúteo máximo e estabilização lombar"},
+        {"nome": "Báscula Pélvica", "exec": "Deitado, imprimir e reverter a lordose lombar no chão", "sr": "3×20", "nivel": "🟢 Iniciante", "obj": "Consciência pélvica e mobilidade"},
+        {"nome": "Enrolamento Abdominal (Crunch)", "exec": "Decúbito dorsal, elevar escápulas sem tracionar o pescoço", "sr": "3×20", "nivel": "🟡 Intermediário", "obj": "Reto abdominal"},
+        {"nome": "Prancha Frontal", "exec": "Apoio em antebraços e pontas dos pés, corpo alinhado", "sr": "3×30–60s", "nivel": "🟡 Intermediário", "obj": "Core global e estabilização"},
+        {"nome": "Bird Dog", "exec": "Quatro apoios, estender braço e perna opostos simultaneamente", "sr": "3×12 cada lado", "nivel": "🟡 Intermediário", "obj": "Estabilização lombopélvica e controle motor"},
+        {"nome": "Dead Bug", "exec": "Decúbito dorsal, braços e pernas no ar, abaixar membro oposto mantendo lombar neutra", "sr": "3×10 cada lado", "nivel": "🔴 Avançado", "obj": "Controle motor profundo e anti-extensão"},
+        {"nome": "Extensão Lombar no Banco", "exec": "Decúbito ventral com quadril no banco, elevar tronco até neutro", "sr": "3×15", "nivel": "🔴 Avançado", "obj": "Extensores lombares e glúteos"},
+        {"nome": "Mcgill Big Three – Curl Up", "exec": "Decúbito dorsal, uma perna fletida, elevar ligeiramente a cabeça e ombros", "sr": "5-3-1 (pirâmide)", "nivel": "🟡 Intermediário", "obj": "Resistência do core – protocolo McGill"},
+    ],
+    "🟡 Ombro": [
+        {"nome": "Pêndulo de Codman", "exec": "Inclinado, braço solto pendendo, movimentos circulares passivos", "sr": "2×60s", "nivel": "🟢 Iniciante", "obj": "Mobilização passiva e analgesia"},
+        {"nome": "Flexão Glenoumeral com Bastão", "exec": "Deitado, usar bastão para elevar o braço acometido com o saudável", "sr": "3×15", "nivel": "🟢 Iniciante", "obj": "Ganho de ADM em flexão"},
+        {"nome": "Rotação Externa com Elástico", "exec": "Cotovelo a 90°, girar antebraço para fora com resistência elástica", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Manguito rotador – infraespinhoso e redondo menor"},
+        {"nome": "Rotação Interna com Elástico", "exec": "Cotovelo a 90°, girar antebraço para dentro com resistência elástica", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Manguito rotador – subescapular"},
+        {"nome": "Abdução Glenoumeral no Plano da Escápula", "exec": "Elevação do braço a 30° da frontal, polegar para cima", "sr": "3×12", "nivel": "🟡 Intermediário", "obj": "Supraespinhoso e deltóide médio"},
+        {"nome": "Remada Baixa com Elástico", "exec": "Puxar elástico para o abdômen, cotovelos próximos ao corpo", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Romboides, trapézio médio e reto do ombro"},
+        {"nome": "Press Overhead com Halteres", "exec": "Sentado, empurrar halteres acima da cabeça com controle", "sr": "3×12", "nivel": "🔴 Avançado", "obj": "Deltóide, trapézio superior e estabilização"},
+        {"nome": "Exercício Y-T-W em Inclinado", "exec": "Deitado em prancha inclinada, executar os padrões Y, T e W com os braços", "sr": "3×10 cada padrão", "nivel": "🔴 Avançado", "obj": "Escapulotorácico e manguito rotador"},
+    ],
+    "🟠 Joelho": [
+        {"nome": "Agachamento Cadeia Cinética Fechada", "exec": "Pés paralelos, descer até 60° de flexão com joelhos alinhados aos pés", "sr": "3×15", "nivel": "🟢 Iniciante", "obj": "Quadríceps, glúteo e co-contração"},
+        {"nome": "Extensão de Joelho Isométrica", "exec": "Sentado, contrair quadríceps pressionando joelho no colchão", "sr": "3×15 (6s)", "nivel": "🟢 Iniciante", "obj": "Quadríceps – fase aguda pós-lesão"},
+        {"nome": "SLR – Elevação do Membro Inferior Estendido", "exec": "Decúbito dorsal, elevar o membro estendido a 45° contraindo o quadríceps", "sr": "3×20", "nivel": "🟢 Iniciante", "obj": "Quadríceps – fase precoce"},
+        {"nome": "Step Up Frontal", "exec": "Subir e descer degrau controlando a flexão do joelho, sem valgo", "sr": "3×12 cada perna", "nivel": "🟡 Intermediário", "obj": "Quadríceps, glúteo e estabilidade funcional"},
+        {"nome": "Leg Press Unilateral", "exec": "Em leg press, trabalhar uma perna por vez, amplitude de 0-90°", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Quadríceps e glúteo com carga controlada"},
+        {"nome": "Agachamento Búlgaro", "exec": "Pé traseiro elevado, descer com o joelho dianteiro alinhado", "sr": "3×10 cada perna", "nivel": "🔴 Avançado", "obj": "Quadríceps, glúteo e estabilidade unilateral"},
+        {"nome": "Nórdico (Nordic Hamstring)", "exec": "Ajoelhado com pés fixos, cair à frente controlando a excentrica", "sr": "3×6–8", "nivel": "🔴 Avançado", "obj": "Isquiotibiais – prevenção e reabilitação de lesão"},
+        {"nome": "Ponte Single Leg com Joelho Fletido", "exec": "Ponte glútea em apoio unilateral, joelho contralateral a 90°", "sr": "3×12 cada perna", "nivel": "🟡 Intermediário", "obj": "Glúteo máximo e estabilização do joelho"},
+    ],
+    "🟤 Quadril": [
+        {"nome": "Abdução de Quadril em Decúbito Lateral", "exec": "Deitado de lado, elevar membro superior estendido a 40°", "sr": "3×20", "nivel": "🟢 Iniciante", "obj": "Glúteo médio"},
+        {"nome": "Clamshell (Mexilhão)", "exec": "Decúbito lateral com quadris e joelhos fletidos, abrir e fechar como mexilhão", "sr": "3×20", "nivel": "🟢 Iniciante", "obj": "Glúteo médio e rotadores externos"},
+        {"nome": "Extensão de Quadril em 4 Apoios", "exec": "Em quatro apoios, estender um membro inferior mantendo coluna neutra", "sr": "3×15 cada lado", "nivel": "🟡 Intermediário", "obj": "Glúteo máximo e estabilização lombar"},
+        {"nome": "Monster Walk com Elástico", "exec": "Elástico nos tornozelos, passos laterais mantendo semi-agachamento", "sr": "3×10m cada lado", "nivel": "🟡 Intermediário", "obj": "Glúteo médio e coordenação"},
+        {"nome": "Hip Thrust com Barra", "exec": "Ombros no banco, barra sobre quadril, elevar o quadril com contração glútea", "sr": "3×12", "nivel": "🔴 Avançado", "obj": "Glúteo máximo – máxima ativação"},
+        {"nome": "Rotação Interna/Externa de Quadril Sentado", "exec": "Sentado, girar a perna medial e lateralmente com amplitude máxima", "sr": "3×15 cada rotação", "nivel": "🟢 Iniciante", "obj": "Mobilidade rotatória do quadril"},
+    ],
+    "🔵 Tornozelo e Pé": [
+        {"nome": "Exercício Alfabeto com o Tornozelo", "exec": "Escrever as letras do alfabeto com o hálux, tornozelo livre", "sr": "2 séries", "nivel": "🟢 Iniciante", "obj": "Mobilidade global do tornozelo – fase aguda"},
+        {"nome": "Elevação de Calcanhares (Calf Raise)", "exec": "Em pé, elevar os calcanhares contraindo o tríceps sural", "sr": "3×20", "nivel": "🟢 Iniciante", "obj": "Gastrocnêmio e sóleo"},
+        {"nome": "Calf Raise Excêntrico em Degrau", "exec": "Subir com os dois pés, descer lentamente em 6s em apoio unilateral", "sr": "3×15 cada perna", "nivel": "🟡 Intermediário", "obj": "Reabilitação de tendão calcâneo – protocolo Alfredson"},
+        {"nome": "Equilíbrio Unipodal Olhos Fechados", "exec": "Apoio em um pé, olhos fechados, manter equilíbrio por 30s", "sr": "3×30s cada perna", "nivel": "🟡 Intermediário", "obj": "Propriocepção e controle neuromuscular"},
+        {"nome": "Mini Agachamento em Prancha de Equilíbrio", "exec": "Sobre prancha instável, realizar mini-agachamento em apoio unilateral", "sr": "3×12 cada perna", "nivel": "🔴 Avançado", "obj": "Propriocepção avançada e força funcional"},
+        {"nome": "Hop Test Progressivo", "exec": "Saltos unilaterais para frente, lateral e em cruz com aterrissagem controlada", "sr": "3×5 cada direção", "nivel": "🔴 Avançado", "obj": "Retorno ao esporte – potência e controle"},
+    ],
+    "⚪ Cotovelo e Punho": [
+        {"nome": "Flexão/Extensão de Punho com Haltere", "exec": "Antebraço apoiado, realizar flexão e extensão de punho com carga leve", "sr": "3×20 cada movimento", "nivel": "🟢 Iniciante", "obj": "Flexores e extensores do punho"},
+        {"nome": "Pronação e Supinação com Martelo", "exec": "Cotovelo a 90°, girar o martelo de forma controlada", "sr": "3×20 cada lado", "nivel": "🟢 Iniciante", "obj": "Pronadores e supinadores – epicondilalgia"},
+        {"nome": "Extensão de Punho Excêntrica (Tyler Twist)", "exec": "Usando barra flexível ou theraband: extensão excêntrica de punho em pronação", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Epicondilite lateral – protocolo Tyler"},
+        {"nome": "Flexão de Cotovelo com Elástico", "exec": "Em pé, cotovelo fixo ao tronco, flexionar contra resistência do elástico", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Bíceps braquial e supinadores"},
+        {"nome": "Squeeze de Bola Antistress", "exec": "Apertar bola maleável repetidamente, variando a pressão", "sr": "3×30", "nivel": "🟢 Iniciante", "obj": "Preensão palmar e musculatura intrínseca"},
+        {"nome": "Extensão de Cotovelo com Elástico (Tríceps)", "exec": "Elástico fixo acima, estender o cotovelo completamente", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Tríceps braquial"},
+    ],
+    "🟣 Core e Postura Global": [
+        {"nome": "Prancha Lateral", "exec": "Apoio em antebraço e borda lateral do pé, corpo alinhado", "sr": "3×30s cada lado", "nivel": "🟡 Intermediário", "obj": "Oblíquos, quadrado lombar e estabilidade lateral"},
+        {"nome": "Prancha com Toque Alternado de Ombro", "exec": "Em posição de flexão, tocar o ombro oposto alternadamente sem rotação de tronco", "sr": "3×20", "nivel": "🔴 Avançado", "obj": "Anti-rotação e estabilidade de core"},
+        {"nome": "Rollout com Roda Abdominal", "exec": "Ajoelhado, rolar a roda à frente mantendo abdômen contraído, voltar lentamente", "sr": "3×10", "nivel": "🔴 Avançado", "obj": "Core anti-extensão – ativação intensa"},
+        {"nome": "Paloff Press com Elástico", "exec": "De pé perpendicular ao elástico, pressionar à frente e retornar sem rotação", "sr": "3×12 cada lado", "nivel": "🟡 Intermediário", "obj": "Anti-rotação e controle de tronco"},
+        {"nome": "Exercício de Dissociação Escapular", "exec": "Em pé com elástico, protrair e retrair as escápulas com controle", "sr": "3×15", "nivel": "🟢 Iniciante", "obj": "Ritmidade escapuloumeral e postura"},
+        {"nome": "Respiração Diafragmática com Feedback", "exec": "Deitado, mão no abdômen, inspirar expandindo o abdômen, expirar lentamente", "sr": "3×10 respirações", "nivel": "🟢 Iniciante", "obj": "Diafragma, PIA e estabilização profunda"},
+        {"nome": "Agachamento Goblet", "exec": "Segurar kettlebell/haltere no peito, agachar com tronco ereto", "sr": "3×15", "nivel": "🟡 Intermediário", "obj": "Quadríceps, glúteo, core e postura global"},
+    ],
+    "🏃 Retorno ao Esporte": [
+        {"nome": "Corrida em Linha Reta Progressiva", "exec": "Iniciar a 50% da velocidade, progredir 10% a cada sessão sem dor", "sr": "10–20 min", "nivel": "🟡 Intermediário", "obj": "Recondicionamento cardiovascular e confiança"},
+        {"nome": "Skipping e Corrida Lateral", "exec": "Exercícios de agilidade em escada de agilidade: skipping, passadas laterais", "sr": "3×10m cada", "nivel": "🔴 Avançado", "obj": "Agilidade, coordenação e velocidade de reação"},
+        {"nome": "Salto Vertical com Aterrissagem (Drop Jump)", "exec": "Cair de uma caixa baixa e imediatamente saltar, aterrissar com joelhos alinhados", "sr": "3×8", "nivel": "🔴 Avançado", "obj": "Pliometria e mecanismo de lesão reverso (ACL)"},
+        {"nome": "Change of Direction 5-10-5", "exec": "Correr 5 metros, tocar o cone, 10 metros para o outro lado, retornar 5 metros", "sr": "5×", "nivel": "🔴 Avançado", "obj": "Mudança de direção e agilidade específica"},
+        {"nome": "Trabalho com Bola Específico do Esporte", "exec": "Passes, recepções e dribles em intensidade crescente", "sr": "15–30 min", "nivel": "🔴 Avançado", "obj": "Habilidade técnica e confiança psicológica"},
+    ],
+}
+
+REGIOES_BANCO = list(BANCO_EXERCICIOS.keys())
+
+def formatar_exercicio(ex):
+    return (
+        f"🏋️ *{ex['nome']}*\n"
+        f"▶️ *Execução:* {ex['exec']}\n"
+        f"🔢 *Séries/Reps:* {ex['sr']}\n"
+        f"📶 *Nível:* {ex['nivel']}\n"
+        f"🎯 *Objetivo:* {ex['obj']}"
+    )
 
 # ================= FUNÇÃO DE CHAMADA À IA =================
 def chamar_gemini(message, prompt, nome_paciente=None, tipo="analise"):
@@ -667,6 +763,7 @@ def menu_principal():
         types.InlineKeyboardButton("📚 Dúvida Técnica", callback_data="duvida_tecnica"),
         types.InlineKeyboardButton("📷 Analisar Laudo", callback_data="analisar_laudo"),
         types.InlineKeyboardButton("🔍 Buscar Artigos", callback_data="buscar_artigos"),
+        types.InlineKeyboardButton("🏋️ Banco de Exercícios", callback_data="banco_exercicios"),
         types.InlineKeyboardButton("💰 Planos Pagos", callback_data="planos"),
         types.InlineKeyboardButton("🌐 Dashboard", callback_data="dashboard"),
         types.InlineKeyboardButton("🎁 Indique um colega", callback_data="indicar")
@@ -1159,6 +1256,56 @@ Sua tarefa é fornecer uma análise resumida para acompanhamento do caso:
 
     elif data == "indicar":
         cmd_indicar(call.message)
+
+    # ========== BANCO DE EXERCÍCIOS ==========
+    elif data == "banco_exercicios":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for regiao in REGIOES_BANCO:
+            markup.add(types.InlineKeyboardButton(regiao, callback_data=f"bex_regiao_{regiao}"))
+        markup.add(types.InlineKeyboardButton("🔙 Menu Principal", callback_data="menu"))
+        bot.send_message(call.message.chat.id,
+            "🏋️ *Banco de Exercícios Terapêuticos*\nSelecione a região corporal:",
+            parse_mode='Markdown', reply_markup=markup)
+
+    elif data.startswith("bex_regiao_"):
+        regiao = data[len("bex_regiao_"):]
+        exercicios = BANCO_EXERCICIOS.get(regiao, [])
+        if not exercicios:
+            bot.send_message(call.message.chat.id, "Região não encontrada.")
+            return
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for i, ex in enumerate(exercicios):
+            markup.add(types.InlineKeyboardButton(
+                f"{ex['nivel']} {ex['nome']}", callback_data=f"bex_ex_{regiao}|{i}"))
+        markup.add(types.InlineKeyboardButton("🔙 Regiões", callback_data="banco_exercicios"))
+        bot.send_message(call.message.chat.id,
+            f"📋 *{regiao}* – {len(exercicios)} exercícios disponíveis:\n\nToque para ver detalhes:",
+            parse_mode='Markdown', reply_markup=markup)
+
+    elif data.startswith("bex_ex_"):
+        resto = data[len("bex_ex_"):]
+        partes = resto.rsplit("|", 1)
+        if len(partes) != 2:
+            bot.send_message(call.message.chat.id, "Erro ao carregar exercício.")
+            return
+        regiao, idx_str = partes
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            bot.send_message(call.message.chat.id, "Erro ao carregar exercício.")
+            return
+        exercicios = BANCO_EXERCICIOS.get(regiao, [])
+        if idx < 0 or idx >= len(exercicios):
+            bot.send_message(call.message.chat.id, "Exercício não encontrado.")
+            return
+        ex = exercicios[idx]
+        texto = formatar_exercicio(ex)
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton(f"🔙 Voltar a {regiao}", callback_data=f"bex_regiao_{regiao}"))
+        bot.send_message(call.message.chat.id, texto, parse_mode='Markdown', reply_markup=markup)
+
+    elif data == "menu":
+        bot.send_message(call.message.chat.id, "📋 Menu principal:", reply_markup=menu_principal())
 
     else:
         bot.send_message(call.message.chat.id, f"⚠️ Comando não reconhecido.")
